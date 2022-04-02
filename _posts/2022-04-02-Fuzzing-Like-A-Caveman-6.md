@@ -32,5 +32,19 @@ openat(AT_FDCWD, "/bin/ls", O_RDONLY)   = 3
 fcntl(3, F_GETFD)                       = 0
 fcntl(3, F_SETFD, FD_CLOEXEC)           = 0
 ```
- ***Keep in mind that as you read through this, if you're following along at home, your output might not match mine exactly. I'm likely on a different distribution than you running a different objdump than you. But the point of the blogpost is just show concepts that you can be creative on your own.***
+ ***Keep in mind that as you read through this, if you're following along at home, your output might not match mine exactly. I'm likely on a different distribution than you running a different objdump than you. But the point of the blogpost is to just show concepts that you can be creative on your own.***
 
+I also noticed that the program doesn't close our input file until the end of execution:
+```
+read(3, "\0\0\0\0\0\0\0\0\10\0\"\0\0\0\0\0\1\0\0\0\377\377\377\377\1\0\0\0\0\0\0\0"..., 4096) = 2720
+write(1, ":(%rax)\n  21ffa4:\t00 00         "..., 4096) = 4096
+write(1, "x0,%eax\n  220105:\t00 00         "..., 4096) = 4096
+close(3)                                = 0
+write(1, "023e:\t00 00                \tadd "..., 2190) = 2190
+exit_group(0)                           = ?
++++ exited with 0 +++
+```
+
+This is good to know, we'll need our harness to be able to emulate an input file fairly well since objdump doesn't just read our file into a memory buffer in one shot or `mmap()` the input file. It is continuously reading from the file throughout the `strace` output. 
+
+Since we don't have source code for the target, we're going to affect behavior by using an `LD_PRELOAD` shared object. By using an `LD_PRELOAD` shared object, we should be able to hook the wrapper functions around the syscalls that interact with our input file and change their behavior to suit our purposes. If you are unfamiliar with dynamic linking or `LD_PRELOAD`, this would be a good stopping point to go Google around for more information. For starters, let's just get a *Hello, World!* shared object loaded. 
