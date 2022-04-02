@@ -70,3 +70,30 @@ __attribute__((constructor)) static void _hook_load(void) {
 
 I added the compiler flags needed to compile to the top of the file as a comment. I got these flags from this blogpost on using `LD_PRELOAD` shared objects a while ago: https://tbrindus.ca/correct-ld-preload-hooking-libc/.
 
+We can now use the `LD_PRELOAD` environment variable and run objdump with our shared object which should print when loaded:
+```
+h0mbre@ubuntu:~/blogpost$ LD_PRELOAD=/home/h0mbre/blogpost/blog_harness.so objdump -D /bin/ls > /tmp/output.txt && head -n 20 /tmp/output.txt
+**> LD_PRELOAD shared object loaded!
+
+/bin/ls:     file format elf64-x86-64
+
+
+Disassembly of section .interp:
+
+0000000000000238 <.interp>:
+ 238:   2f                      (bad)  
+ 239:   6c                      ins    BYTE PTR es:[rdi],dx
+ 23a:   69 62 36 34 2f 6c 64    imul   esp,DWORD PTR [rdx+0x36],0x646c2f34
+ 241:   2d 6c 69 6e 75          sub    eax,0x756e696c
+ 246:   78 2d                   js     275 <_init@@Base-0x34e3>
+ 248:   78 38                   js     282 <_init@@Base-0x34d6>
+ 24a:   36 2d 36 34 2e 73       ss sub eax,0x732e3436
+ 250:   6f                      outs   dx,DWORD PTR ds:[rsi]
+ 251:   2e 32 00                xor    al,BYTE PTR cs:[rax]
+
+Disassembly of section .note.ABI-tag:
+```
+
+It works, now we can looking for functions to hook.
+
+## Looking for Hooks
