@@ -133,4 +133,6 @@ __attribute__((constructor)) static void _hook_load(void) {
 }
 ```
 
-However, if we compile and run that, we don't ever print and exit so our hook is not being called. Something is going wrong. Sometimes, file related functions in libc have `64` variants, such as `open()` and `open64()` that are used somewhat interchangably depending on configurations and flags. I tried hooking a `stat64()` but still had no luck with the hook being reached.
+However, if we compile and run that, we don't ever print and exit so our hook is not being called. Something is going wrong. Sometimes, file related functions in libc have `64` variants, such as `open()` and `open64()` that are used somewhat interchangably depending on configurations and flags. I tried hooking a `stat64()` but still had no luck with the hook being reached. 
+
+Luckily, I'm not the first person with this problem, there is a [great answer on Stackoverflow about the very issue](https://stackoverflow.com/questions/5478780/c-and-ld-preload-open-and-open64-calls-intercepted-but-not-stat64) that describes how libc doesn't actually export `stat()` the same way it does for other functions like `open()` and `open64()`, instead it exports a symbol called `__xstat()` which has a slightly different signature and requires a new argument called `version` which is meant to describe which version of `stat struct` the caller is expecting. This is supposed to all happen magically under the hood but that's where we live now, so we have to make the magic happen ourselves. 
