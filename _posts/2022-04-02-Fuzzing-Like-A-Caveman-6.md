@@ -135,4 +135,35 @@ __attribute__((constructor)) static void _hook_load(void) {
 
 However, if we compile and run that, we don't ever print and exit so our hook is not being called. Something is going wrong. Sometimes, file related functions in libc have `64` variants, such as `open()` and `open64()` that are used somewhat interchangably depending on configurations and flags. I tried hooking a `stat64()` but still had no luck with the hook being reached. 
 
-Luckily, I'm not the first person with this problem, there is a [great answer on Stackoverflow about the very issue](https://stackoverflow.com/questions/5478780/c-and-ld-preload-open-and-open64-calls-intercepted-but-not-stat64) that describes how libc doesn't actually export `stat()` the same way it does for other functions like `open()` and `open64()`, instead it exports a symbol called `__xstat()` which has a slightly different signature and requires a new argument called `version` which is meant to describe which version of `stat struct` the caller is expecting. This is supposed to all happen magically under the hood but that's where we live now, so we have to make the magic happen ourselves. 
+Luckily, I'm not the first person with this problem, there is a [great answer on Stackoverflow about the very issue](https://stackoverflow.com/questions/5478780/c-and-ld-preload-open-and-open64-calls-intercepted-but-not-stat64) that describes how libc doesn't actually export `stat()` the same way it does for other functions like `open()` and `open64()`, instead it exports a symbol called `__xstat()` which has a slightly different signature and requires a new argument called `version` which is meant to describe which version of `stat struct` the caller is expecting. This is supposed to all happen magically under the hood but that's where we live now, so we have to make the magic happen ourselves. The same rules apply for `lstat()` and `fstat()` as well, they have `__lxstat()` and `__fxstat()` respectively.
+
+I found the definitions for the functions [here](https://refspecs.linuxfoundation.org/LSB_1.1.0/gLSB/baselib-xstat-1.html). So we can add the `__xstat()` hook to our shared object in place of the `stat()` and see if our luck changes. Our code now looks like this:
+```c
+/* 
+Compiler flags: 
+gcc -shared -Wall -Werror -fPIC blog_harness.c -o blog_harness.so -ldl
+*/
+
+#include <stdio.h> /* printf */
+#include <sys/stat.h> /* stat */
+#include <stdlib.h> /* exit */
+#include <unistd.h> /* __xstat, __fxstat */
+
+// Filename of the input file we're trying to emulate
+#define FUZZ_TARGET "fuzzme"
+
+// Declare a prototype for the real stat as a function pointer
+typedef int (*__xstat_t)(int __ver, const char *__filename, struct stat *__stat_buf);
+__xstat_t real_xstat = NULL;
+
+// Hook function, objdump will call this stat instead of the real one
+int __xstat(int __ver, const char *__filename, struct stat *__stat_buf) {
+    printf("** Hit our __xstat() hook!\n");
+    exit(0);
+}
+
+// Routine to be called when our shared object is loaded
+__attribute__((constructor)) static void _hook_load(void) {
+    printf("** LD_PRELOAD shared object loaded!\n");
+}
+```
