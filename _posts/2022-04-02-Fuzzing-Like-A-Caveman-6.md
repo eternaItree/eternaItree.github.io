@@ -97,3 +97,9 @@ Disassembly of section .note.ABI-tag:
 It works, now we can looking for functions to hook.
 
 ## Looking for Hooks
+First thing we need to do, is create a fake file name to give objdump so that we can start testing things out. We will copy `/bin/ls` into the current working directory and call it `fuzzme`. This will allow us to generically play around with the harness for testing purposes. Now we have our `strace` output, we know that objdump calls `stat()` on the path for our input file (`/bin/ls`). Since we know our file hasn't been opened yet, and the syscall uses the path for the first arg, we can guess that this syscall results from the libc exported wrapper function for `stat()` or `lstat()`. We can add hooks for those and test to see if we hit them and if they match our target input file (now changed to `fuzzme`).
+
+In order to create a hook, we will follow a pattern where we define a pointer to the real function via a `typedef` and then we will initialize the pointer as `NULL`. Once we need to resolve the location of the **real** function we are hooking, we can use `dlsym(RLTD_NEXT, <symbol name>)` to get it's location and change the pointer value to the real symbol address. (This will be more clear later on). 
+
+Now we need to hook `stat()` which appears in the 
+
