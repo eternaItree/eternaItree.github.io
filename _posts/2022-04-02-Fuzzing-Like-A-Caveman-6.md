@@ -32,3 +32,5 @@ openat(AT_FDCWD, "/bin/ls", O_RDONLY)   = 3
 fcntl(3, F_GETFD)                       = 0
 fcntl(3, F_SETFD, FD_CLOEXEC)           = 0
 ```
+ ***Keep in mind that as you read through this, if you're following along at home, your output might not match mine exactly. I'm likely on a different distribution than you running a different objdump than you. But the point of the blogpost is just show concepts that you can be creative on your own.***
+
