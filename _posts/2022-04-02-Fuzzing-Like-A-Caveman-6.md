@@ -97,9 +97,40 @@ Disassembly of section .note.ABI-tag:
 It works, now we can looking for functions to hook.
 
 ## Looking for Hooks
-First thing we need to do, is create a fake file name to give objdump so that we can start testing things out. We will copy `/bin/ls` into the current working directory and call it `fuzzme`. This will allow us to generically play around with the harness for testing purposes. Now we have our `strace` output, we know that objdump calls `stat()` on the path for our input file (`/bin/ls`). Since we know our file hasn't been opened yet, and the syscall uses the path for the first arg, we can guess that this syscall results from the libc exported wrapper function for `stat()` or `lstat()`. We can add hooks for those and test to see if we hit them and if they match our target input file (now changed to `fuzzme`).
+First thing we need to do, is create a fake file name to give objdump so that we can start testing things out. We will copy `/bin/ls` into the current working directory and call it `fuzzme`. This will allow us to generically play around with the harness for testing purposes. Now we have our `strace` output, we know that objdump calls `stat()` on the path for our input file (`/bin/ls`) a couple of times before we get that call to `openat()`. Since we know our file hasn't been opened yet, and the syscall uses the path for the first arg, we can guess that this syscall results from the libc exported wrapper function for `stat()` or `lstat()`. I'm going to assume `stat()` since we aren't dealing with any symbolic links for `/bin/ls` on my box. We can add a hook for `stat()` to test to see if we hit it and check if it's being called for our target input file (now changed to `fuzzme`).
 
 In order to create a hook, we will follow a pattern where we define a pointer to the real function via a `typedef` and then we will initialize the pointer as `NULL`. Once we need to resolve the location of the **real** function we are hooking, we can use `dlsym(RLTD_NEXT, <symbol name>)` to get it's location and change the pointer value to the real symbol address. (This will be more clear later on). 
 
-Now we need to hook `stat()` which appears in the 
+Now we need to hook `stat()` which appears as a `man 3` entry [here](https://linux.die.net/man/3/stat) (meaning it's a libc exported function) as well as a `man 2` entry (meaning it is a syscall). This was confusing to me for the longest time and I often misunderstood how syscalls actually worked because of this insistence on naming collisions. You can read one of the first research blogposts I ever did [here](https://h0mbre.github.io/Learn-C-By-Creating-A-Rootkit/) where the confusion is palpable and I often make erroneous claims. (PS, I'll never edit the old blogposts with errors in them, they are like time capsules, and it's kind of cool to me).
 
+We want to write a function that when called, simply prints something and exits so that we know our hook was hit. For now, our code looks like this:
+```c
+/* 
+Compiler flags: 
+gcc -shared -Wall -Werror -fPIC blog_harness.c -o blog_harness.so -ldl
+*/
+
+#include <stdio.h> /* printf */
+#include <sys/stat.h> /* stat */
+#include <stdlib.h> /* exit */
+
+// Filename of the input file we're trying to emulate
+#define FUZZ_TARGET "fuzzme"
+
+// Declare a prototype for the real stat as a function pointer
+typedef int (*stat_t)(const char *restrict path, struct stat *restrict buf);
+stat_t real_stat = NULL;
+
+// Hook function, objdump will call this stat instead of the real one
+int stat(const char *restrict path, struct stat *restrict buf) {
+    printf("** stat() hook!\n");
+    exit(0);
+}
+
+// Routine to be called when our shared object is loaded
+__attribute__((constructor)) static void _hook_load(void) {
+    printf("** LD_PRELOAD shared object loaded!\n");
+}
+```
+
+However, if we compile and run that, we don't ever print and exit so our hook is not being called. Something is going wrong. Sometimes, file related functions in libc have `64` variants, such as `open()` and `open64()` that are used somewhat interchangably depending on configurations and flags. I tried hooking a `stat64()` but still had no luck with the hook being reached.
