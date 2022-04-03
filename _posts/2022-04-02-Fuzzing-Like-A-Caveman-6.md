@@ -779,7 +779,7 @@ fstat(1337, 0x7fff4bf54c90)             = -1 EBADF (Bad file descriptor)
 fstat(1337, 0x7fff4bf54bf0)             = -1 EBADF (Bad file descriptor)
 ```
 
-As we've already learned, there is no direct export in libc for `fstat()`, it's one of those weird ones like `stat()` and we actually have to hook `__fxstat()`. So let's try and that hook and see if it gets called for our `1337` file descriptor in our hook. The hook function will look like this to start:
+As we've already learned, there is no direct export in libc for `fstat()`, it's one of those weird ones like `stat()` and we actually have to hook `__fxstat()`. So let's try and hook that to see if it gets called for our `1337` file descriptor. The hook function will look like this to start:
 ```c
 // Declare prototype for the real __fxstat
 typedef int (*__fxstat_t)(int __ver, int __filedesc, struct stat *__stat_buf);
