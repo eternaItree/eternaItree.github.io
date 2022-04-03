@@ -531,8 +531,6 @@ static void *_resolve_symbol(const char *symbol) {
 // Hook for __xstat 
 int __xstat(int __ver, const char* __filename, struct stat* __stat_buf) {
     // Resolve the real __xstat() on demand and maybe multiple times!
-    printf("LMFAO\n");
-    exit(-1);
     if (NULL == real_xstat) {
         real_xstat = _resolve_symbol("__xstat");
     }
@@ -611,9 +609,6 @@ static void _create_mem_mappings(void) {
 
 // Create a "legit" stat struct globally to pass to callees
 static void _setup_stat_struct(void) {
-    // Create a global stat struct for our file in case someone asks, this way
-    // when someone calls stat() or fstat() on our target, we can just return the
-    // slightly altered (new size) stat struct &skip the kernel, save syscalls
     int result = __xstat(0x1337, FUZZ_TARGET, &st);
     if (-1 == result) {
         printf("Error creating stat struct for '%s' during load\n", FUZZ_TARGET);
