@@ -277,7 +277,7 @@ static void _create_mem_mappings(void) {
         exit(-1);
     }
 
-    // Let's actuall initialize the value at the input size location as well
+    // Let's actually initialize the value at the input size location as well
     *(size_t *)INPUT_SZ_ADDR = 0;
 
     // Map the pages to hold the input contents
