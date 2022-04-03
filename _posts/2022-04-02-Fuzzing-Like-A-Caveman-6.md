@@ -303,4 +303,4 @@ static void _create_mem_mappings(void) {
 
 **Random sidenote, be careful about arithmetic in definitions and macros as I've done here with `MAX_INPUT_SIZE`, it's very easy for the pre-processor to substitute your text for the definition keyword and ruin some order of operations or even overflow a specific primitive type like `int`**
 
-
+Hell yeah dude, we now have memory allocated for the fuzzer to store inputs and also information about their size. 
