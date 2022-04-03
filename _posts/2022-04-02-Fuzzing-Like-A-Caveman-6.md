@@ -531,7 +531,7 @@ static void *_resolve_symbol(const char *symbol) {
 // Hook for __xstat 
 int __xstat(int __ver, const char* __filename, struct stat* __stat_buf) {
     // Resolve the real __xstat() on demand and maybe multiple times!
-    if (NULL == real_xstat) {
+    if (!real_xstat) {
         real_xstat = _resolve_symbol("__xstat");
     }
 
@@ -615,8 +615,8 @@ static void _setup_stat_struct(void) {
     }
 }
 
-#ifdef TEST
 // Used for testing, load /bin/ed into the input buffer and update its size info
+#ifdef TEST
 static void _test_func(void) {    
     // Open TEST_FILE for reading
     int fd = open(TEST_FILE, O_RDONLY);
@@ -639,13 +639,13 @@ __attribute__((constructor)) static void _hook_load(void) {
     // Create memory mappings to hold our input and information about its size
     _create_mem_mappings();
 
+    // Setup global "legit" stat struct
+    _setup_stat_struct();
+
     // If we're testing, load /bin/ed up into our input buffer and update size
 #ifdef TEST
     _test_func();
 #endif
-
-    // Setup global "legit" stat struct
-    _setup_stat_struct();
 }
 ```
 
