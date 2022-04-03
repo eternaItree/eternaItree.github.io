@@ -251,6 +251,14 @@ My idea at this point was to create a somewhat "legit" `stat struct` that would 
 6. The imaginary fuzzer copies a new input into harness and updates the input size
 7. Our `__xstat()` hook is called once again, and we repeat step 4, this process occurs over and over forever. 
 
+So we're imagining the fuzzer has some routine like this in pseudocode:
+```
+insert_fuzzcase(config.input_location, config.input_size_location, input, input_size) {
+  memcpy(config.input_location, &input, input_size);
+  memcpy(config.input_size_location, &input_size, sizeof(size_t));
+}
+```
+
 One important thing to keep in mind is that if the snapshot fuzzer is restoring objdump to its snapshot state every fuzzing iteration, we must be careful not to depend on any global mutable memory. The global `stat struct` will be safe since it will be instantiated during the `constructor` however, its size-field will be restored to its original value each fuzzing iteration by the fuzzer's snapshot restore routine. 
 
 We will also need a global, recognizable address to store variable mutable global data like the current input's size. Several snapshot fuzzers have the flexibility to ignore contiguous ranges of memory for restoration purposes. So if we're able to create some contiguous buffers in memory at recognizable addresses, we can have our imaginary fuzzer ignore those ranges for snapshot restorations. So we need to have a place to store the inputs, as well as information about their size. We would then somehow tell the fuzzer about these locations and when it generated a new input, it would copy it into the input location and then update the current input size information.
@@ -448,6 +456,6 @@ objdump: Warning: 'fuzzme' is not an ordinary file
 
 This is cool, this means that the objdump devs did something right and their `stat()` would say: "Hey, this file is zero bytes in length, something weird is going on" and they spit out this error message and exit. Good job devs!
 
-So we have identified a problem, we need to **simulate** the fuzzer placing a real input into memory, to do that, I'm going to start using `#ifdef` to define whether or not we're testing our shared object. So basically, if we compile the shared object and define `TEST`, our shared object will copy an "input" into memory to simulate how the fuzzer would behave during fuzzing and we can see if our harness is working appropriately. So if we define `TEST`, we will copy `/bin/ed` into memory, and we will update our global "legit" `stat struct` size member, and place the `/bin/ed` bytes into memory. We can copy the input into our input buffer on load and update our global `stat struct` as well. So now our harness looks like this!:
+So we have identified a problem, we need to **simulate** the fuzzer placing a real input into memory, to do that, I'm going to start using `#ifdef` to define whether or not we're testing our shared object. So basically, if we compile the shared object and define `TEST`, our shared object will copy an "input" into memory to simulate how the fuzzer would behave during fuzzing and we can see if our harness is working appropriately. So if we define `TEST`, we will copy `/bin/ed` into memory, and we will update our global "legit" `stat struct` size member, and place the `/bin/ed` bytes into memory. We can copy the input into our input buffer on load and update our global `stat struct` as well. So now our harness looks like this:
 ```c
 ```
