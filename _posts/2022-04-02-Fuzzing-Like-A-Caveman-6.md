@@ -695,8 +695,70 @@ Bingo, dino DNA.
 So now we can flesh that hooked function out a bit to behave how we want. 
 
 ## Refining an `fopen64()` Hook
-The definition for `fopen64()` is: ```c FILE *fopen(const char *restrict pathname, const char *restrict mode);```. The returned `FILE *` poses a slight problem to us because this is an opaque data structure that is not meant to be understood by the caller. Which is to say, the caller is not meant to access any members of this data structure or worry about its layout in any way. You're just supposed to use the returned `FILE *` as an object to pass to other functions, such as `fclose()`. The system deals with the data structure there in those types of related functions so that programmers don't have to worry about a specific implementation.
+The definition for `fopen64()` is: ` FILE *fopen(const char *restrict pathname, const char *restrict mode);`. The returned `FILE *` poses a slight problem to us because this is an opaque data structure that is not meant to be understood by the caller. Which is to say, the caller is not meant to access any members of this data structure or worry about its layout in any way. You're just supposed to use the returned `FILE *` as an object to pass to other functions, such as `fclose()`. The system deals with the data structure there in those types of related functions so that programmers don't have to worry about a specific implementation.
 
 We don't actually know how the returned `FILE *` will be used, it may not be used at all, or it may be passed to a function such as `fread()` so we need a way to return a convincing `FILE *` data structure to the caller that is actually built from our input in memory and NOT from the input file. Luckily, there is a libc function called `fmemopen()` which behaves very similarly to `fopen()` and also returns a `FILE *`. So we can go ahead and create a `FILE *` to return to callers of `fopen64()` with `fuzzme` as the target input file.
 
-There is one key difference though. `fopen()` will actually obtain file descriptor for the underlying file and `fmemopen()`, since it is not actually openining a file, will not. So somewhere in the `FILE *` data structure, there is a file descriptor for the underlying file if returned from `fopen()` and there isn't one if returned from `fmemopen()`. This is very important as functions such as ```c int fileno(FILE *stream)```
+There is one key difference though. `fopen()` will actually obtain file descriptor for the underlying file and `fmemopen()`, since it is not actually openining a file, will not. So somewhere in the `FILE *` data structure, there is a file descriptor for the underlying file if returned from `fopen()` and there isn't one if returned from `fmemopen()`. This is very important as functions such as `int fileno(FILE *stream)` can parse a `FILE *` and return its underlying file descriptor to the caller. Objdump may want to do this for some reason and we need to be able to robustly handle it. So we need a way to know if someone is trying to use our faked `FILE *` underlying file descriptor.
+
+My idea for this was to simply find the struct member containing the file descriptor in the `FILE *` returned from `fmemopen()` and change it to be something ridiculous like `1337` so that if objdump ever tried to use that file descriptor we would know the source of it and could try to hook any interactions with the file descriptor. So now our `fopen64()` hook should look as follows:
+```
+// Our fopen hook, return a FILE* to the caller, also, if we are opening our
+// target make sure we're not able to write to the file
+FILE* fopen64(const char* pathname, const char* mode) {
+    // Resolve symbol on demand and only once
+    if (NULL == real_fopen64) {
+        real_fopen64 = _resolve_symbol("fopen64");
+    }
+
+    // Check to see what file we're opening
+    FILE* ret = NULL;
+    if (!strcmp(FUZZ_TARGET, pathname)) {
+        // We're trying to open our file, make sure it's a read-only mode
+        if (strcmp(mode, "r")) {
+            printf("Attempt to open fuzz-target in illegal mode: '%s'\n", mode);
+            exit(-1);
+        }
+
+        // Open shared memory FILE* and return to caller
+        ret = fmemopen((void*)INPUT_ADDR, *(size_t*)INPUT_SZ_ADDR, mode);
+        
+        // Make sure we've never fopen()'d our fuzzing target before
+        if (faked_fp) {
+            printf("Attempting to fopen64() fuzzing target more than once\n");
+            exit(-1);
+        }
+
+        // Update faked_fp
+        faked_fp = ret;
+
+        // Change the filedes to something we know
+        ret->_fileno = 1337;
+    }
+
+    // We're not opening our file, send to regular fopen
+    else {
+        ret = real_fopen64(pathname, mode);
+    }
+
+    // Return FILE stream ptr to caller
+    return ret;
+}
+```
+
+You can see we:
+1. Resolve the symbol location if it hasn't been yet
+2. Check to see if we're being called on our fuzzing target input file
+3. Call `fmemopen()` and open the memory buffer where our current input is in memory along with the input's size
+
+You may also notice a few safety checks as well to make sure things don't go unnoticed. We have a global variable that is `FILE *faked_fp` that we initialize to `NULL` which let's us know if we've ever opened our input more than once (it wouldn't be `NULL` anymore on subsequent attempts to open it). 
+
+We also do a check on the `mode` argument to make sure we're getting a read-only `FILE *` back. We don't want objdump to alter our input or write to it in any way and if it tries to, we need to know about it.
+
+Running our shared object at this point nets us the following output:
+```
+h0mbre@ubuntu:~/blogpost$ LD_PRELOAD=/home/h0mbre/blogpost/blog_harness.so objdump -D fuzzme
+objdump: fuzzme: Bad file descriptor
+```
+
+My spidey-sense is telling me something tried to interact with a file descriptor of `1337`. 
