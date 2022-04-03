@@ -259,6 +259,44 @@ So now our constructor has an additional job: setup the input location as well a
 
 Just by themselves, the functions related to mapping memory space for the inputs themselves and their size information looks like this. Notice that we use `MAP_FIXED` and we check the returned address from `mmap()` just to make sure the call didn't succeed but map our memory at a different location:
 ```c
+// Map memory to hold our inputs in memory and information about their size
+static void _create_mem_mappings(void) {
+    void *result = NULL;
+
+    // Map the page to hold the input size
+    result = mmap(
+        (void *)(INPUT_SZ_ADDR),
+        sizeof(size_t),
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+        0,
+        0
+    );
+    if ((MAP_FAILED == result) || (result != (void *)INPUT_SZ_ADDR)) {
+        printf("Err mapping INPUT_SZ_ADDR, mapped @ %p\n", result);
+        exit(-1);
+    }
+
+    // Let's actuall initialize the value at the input size location as well
+    *(size_t *)INPUT_SZ_ADDR = 0;
+
+    // Map the pages to hold the input contents
+    result = mmap(
+        (void *)(INPUT_ADDR),
+        (size_t)(MAX_INPUT_SZ),
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+        0,
+        0
+    );
+    if ((MAP_FAILED == result) || (result != (void *)INPUT_ADDR)) {
+        printf("Err mapping INPUT_ADDR, mapped @ %p\n", result);
+        exit(-1);
+    }
+
+    // Init the value
+    memset((void *)INPUT_ADDR, 0, (size_t)MAX_INPUT_SZ);
+}
 ```
 
 `mmap()` will actually map multiples of whatever the page size is on your system (typically 4096 bytes). So like, when we ask for `sizeof(size_t)` bytes for the mapping, `mmap()` is like: "Hmm, that's just a page dude" and gives us back a whole page from `0x1336000 - 0x1337000` not inclusive on the high-end. 
