@@ -439,3 +439,10 @@ __attribute__((constructor)) static void _hook_load(void) {
     _create_mem_mappings();    
 }
 ```
+
+Now if we run this, we get the following output: 
+```
+h0mbre@ubuntu:~/blogpost$ LD_PRELOAD=/home/h0mbre/blogpost/blog_harness.so objdump -D fuzzme
+objdump: Warning: 'fuzzme' is not an ordinary file
+```
+
