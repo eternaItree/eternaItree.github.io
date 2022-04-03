@@ -301,6 +301,6 @@ static void _create_mem_mappings(void) {
 
 `mmap()` will actually map multiples of whatever the page size is on your system (typically 4096 bytes). So like, when we ask for `sizeof(size_t)` bytes for the mapping, `mmap()` is like: "Hmm, that's just a page dude" and gives us back a whole page from `0x1336000 - 0x1337000` not inclusive on the high-end. 
 
-**Random sidenote, be careful about arithmetic in definitions and macros as I've done here with `MAX_INPUT_SIZE`, it's very easy for the pre-processor to substitute your text for the definition keyword and ruin some order of operations or even overflow a specific primitive type like `int`**
+**Random sidenote, be careful about arithmetic in definitions and macros as I've done here with `MAX_INPUT_SIZE`, it's very easy for the pre-processor to substitute your text for the definition keyword and ruin some order of operations or even overflow a specific primitive type like `int`.**
 
 Hell yeah dude, we now have memory allocated for the fuzzer to store inputs and also information about their size. 
