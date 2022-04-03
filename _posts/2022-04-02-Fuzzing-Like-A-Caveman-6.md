@@ -458,6 +458,11 @@ This is cool, this means that the objdump devs did something right and their `st
 
 So we have identified a problem, we need to **simulate** the fuzzer placing a real input into memory, to do that, I'm going to start using `#ifdef` to define whether or not we're testing our shared object. So basically, if we compile the shared object and define `TEST`, our shared object will copy an "input" into memory to simulate how the fuzzer would behave during fuzzing and we can see if our harness is working appropriately. So if we define `TEST`, we will copy `/bin/ed` into memory, and we will update our global "legit" `stat struct` size member, and place the `/bin/ed` bytes into memory. 
 
+You can compile the shared object now to perform the test as follows:
+```
+gcc -D TEST -shared -Wall -Werror -fPIC blog_harness.c -o blog_harness.so -ld
+```
+
 We also need to set up our global "legit" `stat struct`, the code to do that should look as follows. Remember, we pass a fake `__ver` variable to let the `__xstat()` hook know that it's us in the `constructor` routine, which allows the hook to behave well and give us the `stat struct` we need:
 ```c
 // Create a "legit" stat struct globally to pass to callers
