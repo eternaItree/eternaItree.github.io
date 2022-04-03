@@ -446,3 +446,8 @@ h0mbre@ubuntu:~/blogpost$ LD_PRELOAD=/home/h0mbre/blogpost/blog_harness.so objdu
 objdump: Warning: 'fuzzme' is not an ordinary file
 ```
 
+This is cool, this means that the objdump devs did something right and their `stat()` would say: "Hey, this file is zero bytes in length, something weird is going on" and they spit out this error message and exit. Good job devs!
+
+So we have identified a problem, we need to **simulate** the fuzzer placing a real input into memory, to do that, I'm going to start using `#ifdef` to define whether or not we're testing our shared object. So basically, if we compile the shared object and define `TEST`, our shared object will copy an "input" into memory to simulate how the fuzzer would behave during fuzzing and we can see if our harness is working appropriately. So if we define `TEST`, we will copy `/bin/ed` into memory, and we will update our global "legit" `stat struct` size member, and place the `/bin/ed` bytes into memory. We can copy the input into our input buffer on load and update our global `stat struct` as well. So now our harness looks like this!:
+```c
+```
