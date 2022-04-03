@@ -695,3 +695,4 @@ Bingo, dino DNA.
 So now we can flesh that hooked function out a bit to behave how we want. 
 
 ## Refining an `fopen64()` Hook
+The definition for `fopen64()` is: `FILE *fopen(const char *restrict pathname, const char *restrict mode);`. The returned `FILE *` poses a slight problem to us because this is an opaque data structure that is not meant to be understood by the caller. 
