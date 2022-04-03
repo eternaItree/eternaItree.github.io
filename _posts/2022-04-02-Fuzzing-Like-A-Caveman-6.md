@@ -897,7 +897,7 @@ h0mbre@ubuntu:~/blogpost$ diff /tmp/ed.txt /tmp/harness.txt
 
 The name of the file in the `argv[]` array is different, so that's the only difference. In the end we were able to feed objdump an input file, but have it actually take input from an in-memory buffer in our harness. 
 
-One more thing, we actually forgot that objdump closes our file didn't we! So I added a quick `fclose()` hook to the harness as well. 
+One more thing, we actually forgot that objdump closes our file didn't we! So I went ahead and added a quick `fclose()` hook. We wouldn't have any problems if `fclose()` just wanted to free the heap memory associated with our `fmemopen()` returned `FILE *`; however, it would also probably try to call `close()` on that wonky file descriptor as well and we don't want that (although it's obvious that objdump doesn't check for success). The imaginary fuzzer should restore `FILE *` heap memory anyways during its snapshot restoration routine.
 
 ## Conclusion
 There are a million different ways to accomplish this goal, I just wanted to walk you through my thought process. There are actually a lot of cool things you can do with this harness, one thing I've done is actually hook `malloc()` to fail on large allocations so that I don't waste fuzzing cycles on things that will eventually timeout. You can also create an `at_exit()` choke point so that no matter what, the program executes your `at_exit()` function every time it is exiting which can be useful for snapshot resets if the program can take multiple exit paths as you only have to cover the one exit point. 
@@ -955,9 +955,6 @@ __fxstat_t real_fxstat = NULL;
 // Declare prototype for the real __fcntl
 typedef int (*fcntl_t)(int fildes, int cmd, ...);
 fcntl_t real_fcntl = NULL;
-
-typedef int (*fclose_t)(FILE* fp);
-fclose_t real_fclose = NULL;
 
 // Returns memory address of *next* location of symbol in library search order
 static void *_resolve_symbol(const char *symbol) {
@@ -1110,22 +1107,6 @@ int fcntl(int fildes, int cmd, ...) {
         printf("** fcntl() called for real file descriptor\n");
         exit(0);
     }
-}
-
-// Check to see if we're closing our faked FILE*
-int fclose(FILE* fp) {
-    // Resolve fclose() on demand and only once
-    if (NULL == real_fclose) {
-        real_fclose = _resolve_symbol("fclose");
-    }
-
-    // Trying to fclose() our faked fp, just return success
-    if (fp == faked_fp) {
-        return 0;
-    }
-
-    // Not calling our faked FILE*, send to real fclose()
-    return real_fclose(fp);
 }
 
 // Map memory to hold our inputs in memory and information about their size
