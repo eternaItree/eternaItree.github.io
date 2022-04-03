@@ -228,3 +228,14 @@ __attribute__((constructor)) static void _hook_load(void) {
     printf("** LD_PRELOAD shared object loaded!\n");
 }
 ```
+
+Ok so now when we run this, and we check for our print statements, things get a little spicy. 
+```
+h0mbre@ubuntu:~/blogpost$ LD_PRELOAD=/home/h0mbre/blogpost/blog_harness.so objdump -D fuzzme > /tmp/output.txt && grep "** __xstat" /tmp/output.txt
+** __xstat() hook called for filename: 'fuzzme'
+** __xstat() hook called for filename: 'fuzzme'
+```
+
+So now we can have some fun. 
+
+## __xstat() Hook
