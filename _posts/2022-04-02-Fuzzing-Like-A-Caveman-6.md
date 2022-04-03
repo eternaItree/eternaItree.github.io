@@ -303,4 +303,6 @@ static void _create_mem_mappings(void) {
 
 **Random sidenote, be careful about arithmetic in definitions and macros as I've done here with `MAX_INPUT_SIZE`, it's very easy for the pre-processor to substitute your text for the definition keyword and ruin some order of operations or even overflow a specific primitive type like `int`.**
 
-Hell yeah dude, we now have memory allocated for the fuzzer to store inputs and also information about their size. 
+Now that we have memory set up for the fuzzer to store inputs and information about the input's size, we can create that global stat struct. But we actually have a big problem. How can we call into `__xstat()` to get our "legit" `stat struct` if we have `__xstat()` hooked?? We would hit our own hook. To circumvent this, we can call `__xstat()` with a special `__ver` argument that we know will mean that it was called from our `constructor`, the variable is an `int` so let's go with `0x1337` as the special value. That way, in our hook, if we check `__ver` and it's `0x1337`, we know we are being called from the `constructor` and we can actually stat our real file and create a global "legit" `stat struct`. When I dumped a normal call by objdump to `__xstat()` the `__version` was always a value of `1` so we will patch it back to that inside our hook. Our `__xstat()` hook should now look something like this: 
+```c
+```
