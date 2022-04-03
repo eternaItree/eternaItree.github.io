@@ -246,7 +246,7 @@ My idea at this point was to create a somewhat "legit" `stat struct` that would 
 1. Our `constructor` function is called when our shared object is loaded
 2. Our `constructor` sets up a global "legit" `stat struct` that we can update for each fuzzcase and pass back to callers of `__xstat()` trying to `stat()` our fuzzing target
 3. The imaginary fuzzer runs objdump to the snapshot location
-4. Our `__xstat()` hook update the the global "legit" `stat struct` size field and copy the `stat struct` into the callee's buffer
+4. Our `__xstat()` hook updates the the global "legit" `stat struct` size field and copies the `stat struct` into the callee's buffer
 5. The imaginary fuzzer restores the state of objdump to its state at snapshot time
 6. The imaginary fuzzer copies a new input into harness and updates the input size
 7. Our `__xstat()` hook is called once again, and we repeat step 4, this process occurs over and over forever. 
@@ -255,4 +255,14 @@ One important thing to keep in mind is that if the snapshot fuzzer is restoring 
 
 We will also need a global, recognizable address to store variable mutable global data like the current input's size. Several snapshot fuzzers have the flexibility to ignore contiguous ranges of memory for restoration purposes. So if we're able to create some contiguous buffers in memory at recognizable addresses, we can have our imaginary fuzzer ignore those ranges for snapshot restorations. So we need to have a place to store the inputs, as well as information about their size. We would then somehow tell the fuzzer about these locations and when it generated a new input, it would copy it into the input location and then update the current input size information.
 
-So now our constructor has an additional job: setup the input location as well as the input size information. We can do this easily with a call to `mmap()` which will allow us to specify an address we want our mapping mapped to with the `MAP_FIXED` flag. 
+So now our constructor has an additional job: setup the input location as well as the input size information. We can do this easily with a call to `mmap()` which will allow us to specify an address we want our mapping mapped to with the `MAP_FIXED` flag. We'll also create a `MAX_INPUT_SZ` definition so that we know how much memory to map from the input location. 
+
+Just by themselves, the functions related to mapping memory space for the inputs themselves and their size information looks like this. Notice that we use `MAP_FIXED` and we check the returned address from `mmap()` just to make sure the call didn't succeed but map our memory at a different location:
+```c
+```
+
+`mmap()` will actually map multiples of whatever the page size is on your system (typically 4096 bytes). So like, when we ask for `sizeof(size_t)` bytes for the mapping, `mmap()` is like: "Hmm, that's just a page dude" and gives us back a whole page from `0x1336000 - 0x1337000` not inclusive on the high-end. 
+
+**Random sidenote, be careful about arithmetic in definitions and macros as I've done here with `MAX_INPUT_SIZE`, it's very easy for the pre-processor to substitute your text for the definition keyword and ruin some order of operations or even overflow a specific primitive type like `int`**
+
+
