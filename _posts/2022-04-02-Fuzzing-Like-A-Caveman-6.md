@@ -137,13 +137,6 @@ However, if we compile and run that, we don't ever print and exit so our hook is
 
 Luckily, I'm not the first person with this problem, there is a [great answer on Stackoverflow about the very issue](https://stackoverflow.com/questions/5478780/c-and-ld-preload-open-and-open64-calls-intercepted-but-not-stat64) that describes how libc doesn't actually export `stat()` the same way it does for other functions like `open()` and `open64()`, instead it exports a symbol called `__xstat()` which has a slightly different signature and requires a new argument called `version` which is meant to describe which version of `stat struct` the caller is expecting. This is supposed to all happen magically under the hood but that's where we live now, so we have to make the magic happen ourselves. The same rules apply for `lstat()` and `fstat()` as well, they have `__lxstat()` and `__fxstat()` respectively.
 
-Interestingly, at least on my distribution of Ubuntu, there are no man 3 entries for `stat()`, which should've been a redflag to begin with: 
-```
-h0mbre@ubuntu:~/blogpost$ man 3 stat
-No manual entry for stat in section 3
-See 'man 7 undocumented' for help when manual pages are not available.
-```
-
 I found the definitions for the functions [here](https://refspecs.linuxfoundation.org/LSB_1.1.0/gLSB/baselib-xstat-1.html). So we can add the `__xstat()` hook to our shared object in place of the `stat()` and see if our luck changes. Our code now looks like this:
 ```c
 /* 
