@@ -900,4 +900,290 @@ The name of the file in the `argv[]` array is different, so that's the only diff
 ## Conclusion
 There are a million different ways to accomplish this goal, I just wanted to walk you through my thought process. There are actually a lot of cool things you can do with this harness, one thing I've done is actually hook `malloc()` to fail on large allocations so that I don't waste fuzzing cycles on things that will eventually timeout. You can also create an `at_exit()` choke point so that no matter what, the program executes your `at_exit()` function every time it is exiting which can be useful for snapshot resets if the program can take multiple exit paths as you only have to cover the one exit point. 
 
-Hopefully this was useful to some!
+Hopefully this was useful to some! The complete code to the harness is below, happy fuzzing!
+```c
+/* 
+Compiler flags: 
+gcc -shared -Wall -Werror -fPIC blog_harness.c -o blog_harness.so -ldl
+*/
+
+#define _GNU_SOURCE     /* dlsym */
+#include <stdio.h> /* printf */
+#include <sys/stat.h> /* stat */
+#include <stdlib.h> /* exit */
+#include <unistd.h> /* __xstat, __fxstat */
+#include <dlfcn.h> /* dlsym and friends */
+#include <sys/mman.h> /* mmap */
+#include <string.h> /* memset */
+#include <fcntl.h> /* open */
+
+// Filename of the input file we're trying to emulate
+#define FUZZ_TARGET     "fuzzme"
+
+// Definitions for our in-memory inputs 
+#define INPUT_SZ_ADDR   0x1336000
+#define INPUT_ADDR      0x1337000
+#define MAX_INPUT_SZ    (1024 * 1024)
+
+// For testing purposes, we read /bin/ed into our input buffer to simulate
+// what the fuzzer would do
+#define  TEST_FILE      "/bin/ed"
+
+// Our "legit" global stat struct
+struct stat st;
+
+// FILE * returned to callers of fopen64() 
+FILE *faked_fp = NULL;
+
+// Declare a prototype for the real stat as a function pointer
+typedef int (*__xstat_t)(int __ver, const char *__filename, struct stat *__stat_buf);
+__xstat_t real_xstat = NULL;
+
+// Declare prototype for the real fopen and its friend fopen64 
+typedef FILE* (*fopen_t)(const char* pathname, const char* mode);
+fopen_t real_fopen = NULL;
+
+typedef FILE* (*fopen64_t)(const char* pathname, const char* mode);
+fopen64_t real_fopen64 = NULL;
+
+// Declare prototype for the real __fxstat
+typedef int (*__fxstat_t)(int __ver, int __filedesc, struct stat *__stat_buf);
+__fxstat_t real_fxstat = NULL;
+
+// Declare prototype for the real __fcntl
+typedef int (*fcntl_t)(int fildes, int cmd, ...);
+fcntl_t real_fcntl = NULL;
+
+// Returns memory address of *next* location of symbol in library search order
+static void *_resolve_symbol(const char *symbol) {
+    // Clear previous errors
+    dlerror();
+
+    // Get symbol address
+    void* addr = dlsym(RTLD_NEXT, symbol);
+
+    // Check for error
+    char* err = NULL;
+    err = dlerror();
+    if (err) {
+        addr = NULL;
+        printf("** Err resolving '%s' addr: %s\n", symbol, err);
+        exit(-1);
+    }
+    
+    return addr;
+}
+
+// Hook for __xstat 
+int __xstat(int __ver, const char* __filename, struct stat* __stat_buf) {
+    // Resolve the real __xstat() on demand and maybe multiple times!
+    if (!real_xstat) {
+        real_xstat = _resolve_symbol("__xstat");
+    }
+
+    // Assume the worst, always
+    int ret = -1;
+
+    // Special __ver value check to see if we're calling from constructor
+    if (0x1337 == __ver) {
+        // Patch back up the version value before sending to real xstat
+        __ver = 1;
+
+        ret = real_xstat(__ver, __filename, __stat_buf);
+
+        // Set the real_xstat back to NULL
+        real_xstat = NULL;
+        return ret;
+    }
+
+    // Determine if we're stat'ing our fuzzing target
+    if (!strcmp(__filename, FUZZ_TARGET)) {
+        // Update our global stat struct
+        st.st_size = *(size_t *)INPUT_SZ_ADDR;
+
+        // Send it back to the caller, skip syscall
+        memcpy(__stat_buf, &st, sizeof(struct stat));
+        ret = 0;
+    }
+
+    // Just a normal stat, send to real xstat
+    else {
+        ret = real_xstat(__ver, __filename, __stat_buf);
+    }
+
+    return ret;
+}
+
+// Exploratory hooks to see if we're using fopen() related functions to open
+// our input file
+FILE* fopen(const char* pathname, const char* mode) {
+    printf("** fopen() called for '%s'\n", pathname);
+    exit(0);
+}
+
+// Our fopen hook, return a FILE* to the caller, also, if we are opening our
+// target make sure we're not able to write to the file
+FILE* fopen64(const char* pathname, const char* mode) {
+    // Resolve symbol on demand and only once
+    if (NULL == real_fopen64) {
+        real_fopen64 = _resolve_symbol("fopen64");
+    }
+
+    // Check to see what file we're opening
+    FILE* ret = NULL;
+    if (!strcmp(FUZZ_TARGET, pathname)) {
+        // We're trying to open our file, make sure it's a read-only mode
+        if (strcmp(mode, "r")) {
+            printf("** Attempt to open fuzz-target in illegal mode: '%s'\n", mode);
+            exit(-1);
+        }
+
+        // Open shared memory FILE* and return to caller
+        ret = fmemopen((void*)INPUT_ADDR, *(size_t*)INPUT_SZ_ADDR, mode);
+        
+        // Make sure we've never fopen()'d our fuzzing target before
+        if (faked_fp) {
+            printf("** Attempting to fopen64() fuzzing target more than once\n");
+            exit(-1);
+        }
+
+        // Update faked_fp
+        faked_fp = ret;
+
+        // Change the filedes to something we know
+        ret->_fileno = 1337;
+    }
+
+    // We're not opening our file, send to regular fopen
+    else {
+        ret = real_fopen64(pathname, mode);
+    }
+
+    // Return FILE stream ptr to caller
+    return ret;
+}
+
+// Hook for __fxstat
+int __fxstat (int __ver, int __filedesc, struct stat *__stat_buf) {
+    // Resolve the real fxstat
+    if (NULL == real_fxstat) {
+        real_fxstat = _resolve_symbol("__fxstat");
+    }
+
+    int ret = -1;
+
+    // Check to see if we're stat'ing our fuzz target
+    if (1337 == __filedesc) {
+        // Patch the global struct with current input size
+        st.st_size = *(size_t*)INPUT_SZ_ADDR;
+
+        // Copy global stat struct back to caller
+        memcpy(__stat_buf, &st, sizeof(struct stat));
+        ret = 0;
+    }
+
+    // Normal stat, send to real fxstat
+    else {
+        ret = real_fxstat(__ver, __filedesc, __stat_buf);
+    }
+
+    return ret;
+}
+
+// Hook for fcntl
+int fcntl(int fildes, int cmd, ...) {
+    // Resolve fcntl symbol if needed
+    if (NULL == real_fcntl) {
+        real_fcntl = _resolve_symbol("fcntl");
+    }
+
+    if (fildes == 1337) {
+        return O_RDONLY;
+    }
+
+    else {
+        printf("** fcntl() called for real file descriptor\n");
+        exit(0);
+    }
+}
+
+// Map memory to hold our inputs in memory and information about their size
+static void _create_mem_mappings(void) {
+    void *result = NULL;
+
+    // Map the page to hold the input size
+    result = mmap(
+        (void *)(INPUT_SZ_ADDR),
+        sizeof(size_t),
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+        0,
+        0
+    );
+    if ((MAP_FAILED == result) || (result != (void *)INPUT_SZ_ADDR)) {
+        printf("** Err mapping INPUT_SZ_ADDR, mapped @ %p\n", result);
+        exit(-1);
+    }
+
+    // Let's actually initialize the value at the input size location as well
+    *(size_t *)INPUT_SZ_ADDR = 0;
+
+    // Map the pages to hold the input contents
+    result = mmap(
+        (void *)(INPUT_ADDR),
+        (size_t)(MAX_INPUT_SZ),
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+        0,
+        0
+    );
+    if ((MAP_FAILED == result) || (result != (void *)INPUT_ADDR)) {
+        printf("** Err mapping INPUT_ADDR, mapped @ %p\n", result);
+        exit(-1);
+    }
+
+    // Init the value
+    memset((void *)INPUT_ADDR, 0, (size_t)MAX_INPUT_SZ);
+}
+
+// Create a "legit" stat struct globally to pass to callers
+static void _setup_stat_struct(void) {
+    int result = __xstat(0x1337, FUZZ_TARGET, &st);
+    if (-1 == result) {
+        printf("** Err creating stat struct for '%s' during load\n", FUZZ_TARGET);
+    }
+}
+
+// Used for testing, load /bin/ed into the input buffer and update its size info
+#ifdef TEST
+static void _test_func(void) {    
+    // Open TEST_FILE for reading
+    int fd = open(TEST_FILE, O_RDONLY);
+    if (-1 == fd) {
+        printf("** Failed to open '%s' during test\n", TEST_FILE);
+        exit(-1);
+    }
+
+    // Attempt to read max input buf size
+    ssize_t bytes = read(fd, (void*)INPUT_ADDR, (size_t)MAX_INPUT_SZ);
+    close(fd);
+
+    // Update the input size
+    *(size_t *)INPUT_SZ_ADDR = (size_t)bytes;
+}
+#endif
+
+// Routine to be called when our shared object is loaded
+__attribute__((constructor)) static void _hook_load(void) {
+    // Create memory mappings to hold our input and information about its size
+    _create_mem_mappings();
+
+    // Setup global "legit" stat struct
+    _setup_stat_struct();
+
+    // If we're testing, load /bin/ed up into our input buffer and update size
+#ifdef TEST
+    _test_func();
+#endif
+}
+```
