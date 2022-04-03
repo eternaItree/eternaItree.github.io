@@ -303,6 +303,139 @@ static void _create_mem_mappings(void) {
 
 **Random sidenote, be careful about arithmetic in definitions and macros as I've done here with `MAX_INPUT_SIZE`, it's very easy for the pre-processor to substitute your text for the definition keyword and ruin some order of operations or even overflow a specific primitive type like `int`.**
 
-Now that we have memory set up for the fuzzer to store inputs and information about the input's size, we can create that global stat struct. But we actually have a big problem. How can we call into `__xstat()` to get our "legit" `stat struct` if we have `__xstat()` hooked?? We would hit our own hook. To circumvent this, we can call `__xstat()` with a special `__ver` argument that we know will mean that it was called from our `constructor`, the variable is an `int` so let's go with `0x1337` as the special value. That way, in our hook, if we check `__ver` and it's `0x1337`, we know we are being called from the `constructor` and we can actually stat our real file and create a global "legit" `stat struct`. When I dumped a normal call by objdump to `__xstat()` the `__version` was always a value of `1` so we will patch it back to that inside our hook. Our `__xstat()` hook should now look something like this: 
+Now that we have memory set up for the fuzzer to store inputs and information about the input's size, we can create that global stat struct. But we actually have a big problem. How can we call into `__xstat()` to get our "legit" `stat struct` if we have `__xstat()` hooked?? We would hit our own hook. To circumvent this, we can call `__xstat()` with a special `__ver` argument that we know will mean that it was called from our `constructor`, the variable is an `int` so let's go with `0x1337` as the special value. That way, in our hook, if we check `__ver` and it's `0x1337`, we know we are being called from the `constructor` and we can actually stat our real file and create a global "legit" `stat struct`. When I dumped a normal call by objdump to `__xstat()` the `__version` was always a value of `1` so we will patch it back to that inside our hook. Now our entire shared object source file should look like this:
 ```c
+/* 
+Compiler flags: 
+gcc -shared -Wall -Werror -fPIC blog_harness.c -o blog_harness.so -ldl
+*/
+
+#define _GNU_SOURCE     /* dlsym */
+#include <stdio.h> /* printf */
+#include <sys/stat.h> /* stat */
+#include <stdlib.h> /* exit */
+#include <unistd.h> /* __xstat, __fxstat */
+#include <dlfcn.h> /* dlsym and friends */
+#include <sys/mman.h> /* mmap */
+#include <string.h> /* memset */
+
+// Filename of the input file we're trying to emulate
+#define FUZZ_TARGET "fuzzme"
+
+// Definitions for our in-memory inputs 
+#define INPUT_SZ_ADDR   0x1336000
+#define INPUT_ADDR      0x1337000
+#define MAX_INPUT_SZ    (1024 * 1024)
+
+// Our "legit" global stat struct
+struct stat st;
+
+// Declare a prototype for the real stat as a function pointer
+typedef int (*__xstat_t)(int __ver, const char *__filename, struct stat *__stat_buf);
+__xstat_t real_xstat = NULL;
+
+// Returns memory address of *next* location of symbol in library search order
+static void *_resolve_symbol(const char *symbol) {
+    // Clear previous errors
+    dlerror();
+
+    // Get symbol address
+    void* addr = dlsym(RTLD_NEXT, symbol);
+
+    // Check for error
+    char* err = NULL;
+    err = dlerror();
+    if (err) {
+        addr = NULL;
+        printf("Err resolving '%s' addr: %s\n", symbol, err);
+        exit(-1);
+    }
+    
+    return addr;
+}
+
+// Hook for __xstat 
+int __xstat(int __ver, const char* __filename, struct stat* __stat_buf) {
+    // Resolve the real __xstat() on demand and maybe multiple times!
+    if (NULL == real_xstat) {
+        real_xstat = _resolve_symbol("__xstat");
+    }
+
+    // Assume the worst, always
+    int ret = -1;
+
+    // Special __ver value check to see if we're calling from constructor
+    if (0x1337 == __ver) {
+        // Patch back up the version value before sending to real xstat
+        __ver = 1;
+
+        ret = real_xstat(__ver, __filename, __stat_buf);
+
+        // Set the real_xstat back to NULL
+        real_xstat = NULL;
+        return ret;
+    }
+
+    // Determine if we're stat'ing our fuzzing target
+    if (!strcmp(__filename, FUZZ_TARGET)) {
+        // Update our global stat struct
+        st.st_size = *(size_t *)INPUT_SZ_ADDR;
+
+        // Send it back to the caller, skip syscall
+        memcpy(__stat_buf, &st, sizeof(struct stat));
+        ret = 0;
+    }
+
+    // Just a normal stat, send to real xstat
+    else {
+        ret = real_xstat(__ver, __filename, __stat_buf);
+    }
+
+    return ret;
+}
+
+// Map memory to hold our inputs in memory and information about their size
+static void _create_mem_mappings(void) {
+    void *result = NULL;
+
+    // Map the page to hold the input size
+    result = mmap(
+        (void *)(INPUT_SZ_ADDR),
+        sizeof(size_t),
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+        0,
+        0
+    );
+    if ((MAP_FAILED == result) || (result != (void *)INPUT_SZ_ADDR)) {
+        printf("Err mapping INPUT_SZ_ADDR, mapped @ %p\n", result);
+        exit(-1);
+    }
+
+    // Let's actually initialize the value at the input size location as well
+    *(size_t *)INPUT_SZ_ADDR = 0;
+
+    // Map the pages to hold the input contents
+    result = mmap(
+        (void *)(INPUT_ADDR),
+        (size_t)(MAX_INPUT_SZ),
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+        0,
+        0
+    );
+    if ((MAP_FAILED == result) || (result != (void *)INPUT_ADDR)) {
+        printf("Err mapping INPUT_ADDR, mapped @ %p\n", result);
+        exit(-1);
+    }
+
+    // Init the value
+    memset((void *)INPUT_ADDR, 0, (size_t)MAX_INPUT_SZ);
+}
+
+// Routine to be called when our shared object is loaded
+__attribute__((constructor)) static void _hook_load(void) {
+    // Create memory mappings to hold our input and information about its size
+    _create_mem_mappings();    
+}
 ```
