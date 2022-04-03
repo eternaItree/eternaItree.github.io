@@ -621,3 +621,5 @@ __attribute__((constructor)) static void _hook_load(void) {
 #endif    
 }
 ```
+
+So now, if we're testing, objdump should actually `stat()` and get back a valid `stat struct` as if `/bin/ed` was the input file and not `fuzzme` aka `/bin/ls`. 
