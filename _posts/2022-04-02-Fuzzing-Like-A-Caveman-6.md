@@ -251,7 +251,7 @@ My idea at this point was to create a somewhat "legit" `stat struct` that would 
 6. The imaginary fuzzer copies a new input into harness and updates the input size
 7. Our `__xstat()` hook is called once again, and we repeat step 4, this process occurs over and over forever. 
 
-So we're imagining the fuzzer has some routine like this in pseudocode:
+So we're imagining the fuzzer has some routine like this in pseudocode, even though it'd likely be cross-process and require `process_vm_writev`:
 ```
 insert_fuzzcase(config.input_location, config.input_size_location, input, input_size) {
   memcpy(config.input_location, &input, input_size);
