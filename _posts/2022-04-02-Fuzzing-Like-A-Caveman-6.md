@@ -683,3 +683,15 @@ FILE* fopen64(const char* pathname, const char* mode) {
     exit(0);
 }
 ```
+
+If we compile and run our exploratory hooks, we get the following output:
+```
+h0mbre@ubuntu:~/blogpost$ LD_PRELOAD=/home/h0mbre/blogpost/blog_harness.so objdump -D fuzzme
+** fopen64() called for 'fuzzme'
+```
+
+Bingo, dino DNA. 
+
+So now we can flesh that hooked function out a bit to behave how we want. 
+
+## Refining an `fopen64()` Hook
