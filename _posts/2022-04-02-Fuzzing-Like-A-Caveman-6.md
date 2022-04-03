@@ -458,4 +458,166 @@ This is cool, this means that the objdump devs did something right and their `st
 
 So we have identified a problem, we need to **simulate** the fuzzer placing a real input into memory, to do that, I'm going to start using `#ifdef` to define whether or not we're testing our shared object. So basically, if we compile the shared object and define `TEST`, our shared object will copy an "input" into memory to simulate how the fuzzer would behave during fuzzing and we can see if our harness is working appropriately. So if we define `TEST`, we will copy `/bin/ed` into memory, and we will update our global "legit" `stat struct` size member, and place the `/bin/ed` bytes into memory. We can copy the input into our input buffer on load and update our global `stat struct` as well. So now our harness looks like this:
 ```c
+/* 
+Compiler flags: 
+gcc -shared -Wall -Werror -fPIC blog_harness.c -o blog_harness.so -ldl
+*/
+
+#define _GNU_SOURCE     /* dlsym */
+#include <stdio.h> /* printf */
+#include <sys/stat.h> /* stat */
+#include <stdlib.h> /* exit */
+#include <unistd.h> /* __xstat, __fxstat */
+#include <dlfcn.h> /* dlsym and friends */
+#include <sys/mman.h> /* mmap */
+#include <string.h> /* memset */
+#include <fcntl.h> /* open */
+
+// Filename of the input file we're trying to emulate
+#define FUZZ_TARGET     "fuzzme"
+
+// Definitions for our in-memory inputs 
+#define INPUT_SZ_ADDR   0x1336000
+#define INPUT_ADDR      0x1337000
+#define MAX_INPUT_SZ    (1024 * 1024)
+
+// For testing purposes, we read /bin/ed into our input buffer to simulate
+// what the fuzzer would do
+#define  TEST_FILE      "/bin/ed"
+
+// Our "legit" global stat struct
+struct stat st;
+
+// Declare a prototype for the real stat as a function pointer
+typedef int (*__xstat_t)(int __ver, const char *__filename, struct stat *__stat_buf);
+__xstat_t real_xstat = NULL;
+
+// Returns memory address of *next* location of symbol in library search order
+static void *_resolve_symbol(const char *symbol) {
+    // Clear previous errors
+    dlerror();
+
+    // Get symbol address
+    void* addr = dlsym(RTLD_NEXT, symbol);
+
+    // Check for error
+    char* err = NULL;
+    err = dlerror();
+    if (err) {
+        addr = NULL;
+        printf("Err resolving '%s' addr: %s\n", symbol, err);
+        exit(-1);
+    }
+    
+    return addr;
+}
+
+// Hook for __xstat 
+int __xstat(int __ver, const char* __filename, struct stat* __stat_buf) {
+    // Resolve the real __xstat() on demand and maybe multiple times!
+    if (NULL == real_xstat) {
+        real_xstat = _resolve_symbol("__xstat");
+    }
+
+    // Assume the worst, always
+    int ret = -1;
+
+    // Special __ver value check to see if we're calling from constructor
+    if (0x1337 == __ver) {
+        // Patch back up the version value before sending to real xstat
+        __ver = 1;
+
+        ret = real_xstat(__ver, __filename, __stat_buf);
+
+        // Set the real_xstat back to NULL
+        real_xstat = NULL;
+        return ret;
+    }
+
+    // Determine if we're stat'ing our fuzzing target
+    if (!strcmp(__filename, FUZZ_TARGET)) {
+        // Update our global stat struct
+        st.st_size = *(size_t *)INPUT_SZ_ADDR;
+
+        // Send it back to the caller, skip syscall
+        memcpy(__stat_buf, &st, sizeof(struct stat));
+        ret = 0;
+    }
+
+    // Just a normal stat, send to real xstat
+    else {
+        ret = real_xstat(__ver, __filename, __stat_buf);
+    }
+
+    return ret;
+}
+
+// Map memory to hold our inputs in memory and information about their size
+static void _create_mem_mappings(void) {
+    void *result = NULL;
+
+    // Map the page to hold the input size
+    result = mmap(
+        (void *)(INPUT_SZ_ADDR),
+        sizeof(size_t),
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+        0,
+        0
+    );
+    if ((MAP_FAILED == result) || (result != (void *)INPUT_SZ_ADDR)) {
+        printf("Err mapping INPUT_SZ_ADDR, mapped @ %p\n", result);
+        exit(-1);
+    }
+
+    // Let's actually initialize the value at the input size location as well
+    *(size_t *)INPUT_SZ_ADDR = 0;
+
+    // Map the pages to hold the input contents
+    result = mmap(
+        (void *)(INPUT_ADDR),
+        (size_t)(MAX_INPUT_SZ),
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+        0,
+        0
+    );
+    if ((MAP_FAILED == result) || (result != (void *)INPUT_ADDR)) {
+        printf("Err mapping INPUT_ADDR, mapped @ %p\n", result);
+        exit(-1);
+    }
+
+    // Init the value
+    memset((void *)INPUT_ADDR, 0, (size_t)MAX_INPUT_SZ);
+}
+
+#ifdef TEST
+// Used for testing, load /bin/ed into the input buffer and update its size info
+static void _test_func(void) {    
+    // Open TEST_FILE for reading
+    int fd = open(TEST_FILE, O_RDONLY);
+    if (-1 == fd) {
+        printf("Failed to open '%s' during test\n", TEST_FILE);
+        exit(-1);
+    }
+
+    // Attempt to read max input buf size
+    ssize_t bytes = read(fd, (void*)INPUT_ADDR, (size_t)MAX_INPUT_SZ);
+    close(fd);
+
+    // Update the input size
+    *(size_t *)INPUT_SZ_ADDR = (size_t)bytes;
+}
+#endif
+
+// Routine to be called when our shared object is loaded
+__attribute__((constructor)) static void _hook_load(void) {
+    // Create memory mappings to hold our input and information about its size
+    _create_mem_mappings();
+
+    // If we're testing, load /bin/ed up into our input buffer and update size
+#ifdef TEST
+    _test_func();
+#endif    
+}
 ```
