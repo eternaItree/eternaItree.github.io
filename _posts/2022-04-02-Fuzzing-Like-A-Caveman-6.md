@@ -789,3 +789,71 @@ int __fxstat (int __ver, int __filedesc, struct stat *__stat_buf) {
 }
 ```
 
+Now we also still have that `fcntl()` to deal with, luckily that hook is straightforward, if someone asks for the `F_GETFD` aka, the flags associated with that special `1337` file descriptor, we'll simply return `O_RDONLY` as those were the flags it was "opened" with, and we'll just panic for now if someone calls it for a different file descriptor. This hook looks like this:
+```c
+// Declare prototype for the real __fcntl
+typedef int (*fcntl_t)(int fildes, int cmd, ...);
+fcntl_t real_fcntl = NULL;
+
+...
+
+// Hook for fcntl
+int fcntl(int fildes, int cmd, ...) {
+    // Resolve fcntl symbol if needed
+    if (NULL == real_fcntl) {
+        real_fcntl = _resolve_symbol("fcntl");
+    }
+
+    if (fildes == 1337) {
+        return O_RDONLY;
+    }
+
+    else {
+        printf("** fcntl() called for real file descriptor\n");
+        exit(0);
+    }
+}
+```
+
+Running this under `strace` now, the `fcntl()` call is absent as we would expect:
+```
+openat(AT_FDCWD, "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache", O_RDONLY) = 3
+fstat(3, {st_mode=S_IFREG|0644, st_size=26376, ...}) = 0
+mmap(NULL, 26376, PROT_READ, MAP_SHARED, 3, 0) = 0x7ff61d331000
+close(3)                                = 0
+prlimit64(0, RLIMIT_NOFILE, NULL, {rlim_cur=4*1024, rlim_max=4*1024}) = 0
+fstat(1, {st_mode=S_IFREG|0664, st_size=0, ...}) = 0
+write(1, "** __fxstat() called for __filed"..., 42) = 42
+exit_group(0)                           = ?
++++ exited with 0 +++
+```
+
+Now we can flesh out our `__fxstat()` hook with some logic. The caller is hoping to retrieve a `stat struct` from the function for our fuzzing target `fuzzme` by passing the special file descriptor `1337`. Luckily, we have our global `stat struct` that we can return after we update its size to match that of the current input in memory (as tracked by us and the fuzzer as the value at `INPUT_SIZE_ADDR`). So if called, we simply update our `stat struct` size, and `memcpy` our struct into their `*__stat_buf`. Our complete hook now looks like this:
+```c
+// Hook for __fxstat
+int __fxstat (int __ver, int __filedesc, struct stat *__stat_buf) {
+    // Resolve the real fxstat
+    if (NULL == real_fxstat) {
+        real_fxstat = _resolve_symbol("__fxstat");
+    }
+
+    int ret = -1;
+
+    // Check to see if we're stat'ing our fuzz target
+    if (1337 == __filedesc) {
+        // Patch the global struct with current input size
+        st.st_size = *(size_t*)INPUT_SZ_ADDR;
+
+        // Copy global stat struct back to caller
+        memcpy(__stat_buf, &st, sizeof(struct stat));
+        ret = 0;
+    }
+
+    // Normal stat, send to real fxstat
+    else {
+        ret = real_fxstat(__ver, __filedesc, __stat_buf);
+    }
+
+    return ret;
+}
+```
