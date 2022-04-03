@@ -167,3 +167,64 @@ __attribute__((constructor)) static void _hook_load(void) {
     printf("** LD_PRELOAD shared object loaded!\n");
 }
 ```
+
+Now if we run our shared object, we get the desired outcome, somewhere, our hook is hit. Now we can help ourselves out a bit and print the filenames being requested by the hook and then actually call the real `__xstat()` on behalf of the caller. Now when our hook is hit, we will have to resolve the location of the real `__xstat()` by name, so we'll add a symbol resolving function to our shared object. Our shared object code now looks like this:
+```c
+/* 
+Compiler flags: 
+gcc -shared -Wall -Werror -fPIC blog_harness.c -o blog_harness.so -ldl
+*/
+
+#define _GNU_SOURCE     /* dlsym */
+#include <stdio.h> /* printf */
+#include <sys/stat.h> /* stat */
+#include <stdlib.h> /* exit */
+#include <unistd.h> /* __xstat, __fxstat */
+#include <dlfcn.h> /* dlsym and friends */
+
+// Filename of the input file we're trying to emulate
+#define FUZZ_TARGET "fuzzme"
+
+// Declare a prototype for the real stat as a function pointer
+typedef int (*__xstat_t)(int __ver, const char *__filename, struct stat *__stat_buf);
+__xstat_t real_xstat = NULL;
+
+// Returns memory address of *next* location of symbol in library search order
+static void *_resolve_symbol(const char *symbol) {
+    // Clear previous errors
+    dlerror();
+
+    // Get symbol address
+    void* addr = dlsym(RTLD_NEXT, symbol);
+
+    // Check for error
+    char* err = NULL;
+    err = dlerror();
+    if (err) {
+        addr = NULL;
+        printf("Err resolving '%s' addr: %s\n", symbol, err);
+        exit(-1);
+    }
+    
+    return addr;
+}
+
+// Hook function, objdump will call this stat instead of the real one
+int __xstat(int __ver, const char *__filename, struct stat *__stat_buf) {
+    // Print the filename requested
+    printf("** __xstat() hook called for filename: '%s'\n", __filename);
+
+    // Resolve the address of the real __xstat() on demand and only once
+    if (!real_xstat) {
+        real_xstat = _resolve_symbol("__xstat");
+    }
+
+    // Call the real __xstat() for the caller so everything keeps going
+    return real_xstat(__ver, __filename, __stat_buf);
+}
+
+// Routine to be called when our shared object is loaded
+__attribute__((constructor)) static void _hook_load(void) {
+    printf("** LD_PRELOAD shared object loaded!\n");
+}
+```
