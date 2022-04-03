@@ -660,4 +660,26 @@ fcntl(3, F_SETFD, FD_CLOEXEC)           = 0
 We no longer see the `stat()` calls before the `openat()` and the program does not break in any significant way. So this hook seems to be working appropriately. We now need to handle the `openat()` and make sure we don't actually interact with our input file, but instead trick objdump to interact with our input in memory.
 
 ## Finding a Way to Hook `openat()`
-My non-expert intuition tells me theres probably a few ways in which a libc function could end up calling `openat()` under the hood. Those ways might include the wrappers `open()` as well as `fopen()`. We also need to be mindful of their `64` variants as well (`open64()`, `fopen64()`). So in order to figure out if one of those functions is our target, we can simply write hooks for all of them and see which ones get called for `fuzzme`. 
+My non-expert intuition tells me theres probably a few ways in which a libc function could end up calling `openat()` under the hood. Those ways might include the wrappers `open()` as well as `fopen()`. We also need to be mindful of their `64` variants as well (`open64()`, `fopen64()`). I decided to try the `fopen()` hooks first:
+```c
+// Declare prototype for the real fopen and its friend fopen64 
+typedef FILE* (*fopen_t)(const char* pathname, const char* mode);
+fopen_t real_fopen = NULL;
+
+typedef FILE* (*fopen64_t)(const char* pathname, const char* mode);
+fopen64_t real_fopen64 = NULL;
+
+...
+
+// Exploratory hooks to see if we're using fopen() related functions to open
+// our input file
+FILE* fopen(const char* pathname, const char* mode) {
+    printf("** fopen() called for '%s'\n", pathname);
+    exit(0);
+}
+
+FILE* fopen64(const char* pathname, const char* mode) {
+    printf("** fopen64() called for '%s'\n", pathname);
+    exit(0);
+}
+```
