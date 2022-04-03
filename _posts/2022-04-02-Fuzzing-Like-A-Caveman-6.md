@@ -857,3 +857,47 @@ int __fxstat (int __ver, int __filedesc, struct stat *__stat_buf) {
     return ret;
 }
 ```
+
+Now if we run this, we actually don't break and objdump is able exit cleanly under `strace`.
+
+## Wrapping Up
+To test whether or not we have done a fair job, we will go ahead and output `objdump -D fuzzme` to a file, and then we'll go ahead and output the same command but with our harness shared object loaded. Lastly, we'll run `objdump -D /bin/ed` and output to a file to see if our harness created the same output.
+```
+h0mbre@ubuntu:~/blogpost$ objdump -D fuzzme > /tmp/fuzzme_original.txt      
+h0mbre@ubuntu:~/blogpost$ LD_PRELOAD=/home/h0mbre/blogpost/blog_harness.so objdump -D fuzzme > /tmp/harness.txt 
+h0mbre@ubuntu:~/blogpost$ objdump -D /bin/ed > /tmp/ed.txt
+```
+
+Then we `sha1sum` the files:
+```
+h0mbre@ubuntu:~/blogpost$ sha1sum /tmp/fuzzme_original.txt /tmp/harness.txt /tmp/ed.txt 
+938518c86301ab00ddf6a3ef528d7610fa3fd05a  /tmp/fuzzme_original.txt
+add4e6c3c298733f48fbfe143caee79445c2f196  /tmp/harness.txt
+10454308b672022b40f6ce5e32a6217612b462c8  /tmp/ed.txt
+```
+
+We actually get three different hashes, we wanted the harness and `/bin/ed` to output the same output since `/bin/ed` is the input we loaded into memory.
+```
+h0mbre@ubuntu:~/blogpost$ ls -laht /tmp
+total 14M
+drwxrwxrwt 28 root   root   128K Apr  3 08:44 .
+-rw-rw-r--  1 h0mbre h0mbre 736K Apr  3 08:43 ed.txt
+-rw-rw-r--  1 h0mbre h0mbre 736K Apr  3 08:43 harness.txt
+-rw-rw-r--  1 h0mbre h0mbre 2.2M Apr  3 08:42 fuzzme_original.txt
+```
+
+Ah, they are the same length at least, that must mean there is a subtle difference and `diff` shows us why the hashes aren't the same:
+```
+h0mbre@ubuntu:~/blogpost$ diff /tmp/ed.txt /tmp/harness.txt 
+2c2
+< /bin/ed:     file format elf64-x86-64
+---
+> fuzzme:     file format elf64-x86-64
+```
+
+The name of the file in the `argv[]` array is different, so that's the only difference. In the end we were able to feed objdump an input file, but have it actually take input from an in-memory buffer in our harness. 
+
+## Conclusion
+There are a million different ways to accomplish this goal, I just wanted to walk you through my thought process. There are actually a lot of cool things you can do with this harness, one thing I've done is actually hook `malloc()` to fail on large allocations so that I don't waste fuzzing cycles on things that will eventually timeout. You can also create an `at_exit()` choke point so that no matter what, the program executes your `at_exit()` function every time it is exiting which can be useful for snapshot resets if the program can take multiple exit paths as you only have to cover the one exit point. 
+
+Hopefully this was useful to some!
