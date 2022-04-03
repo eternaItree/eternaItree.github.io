@@ -456,7 +456,23 @@ objdump: Warning: 'fuzzme' is not an ordinary file
 
 This is cool, this means that the objdump devs did something right and their `stat()` would say: "Hey, this file is zero bytes in length, something weird is going on" and they spit out this error message and exit. Good job devs!
 
-So we have identified a problem, we need to **simulate** the fuzzer placing a real input into memory, to do that, I'm going to start using `#ifdef` to define whether or not we're testing our shared object. So basically, if we compile the shared object and define `TEST`, our shared object will copy an "input" into memory to simulate how the fuzzer would behave during fuzzing and we can see if our harness is working appropriately. So if we define `TEST`, we will copy `/bin/ed` into memory, and we will update our global "legit" `stat struct` size member, and place the `/bin/ed` bytes into memory. We can copy the input into our input buffer on load and update our global `stat struct` as well. So now our harness looks like this:
+So we have identified a problem, we need to **simulate** the fuzzer placing a real input into memory, to do that, I'm going to start using `#ifdef` to define whether or not we're testing our shared object. So basically, if we compile the shared object and define `TEST`, our shared object will copy an "input" into memory to simulate how the fuzzer would behave during fuzzing and we can see if our harness is working appropriately. So if we define `TEST`, we will copy `/bin/ed` into memory, and we will update our global "legit" `stat struct` size member, and place the `/bin/ed` bytes into memory. 
+
+We also need to set up our global "legit" `stat struct`, the code to do that should look as follows. Remember, we pass a fake `__ver` variable to let the `__xstat()` hook know that it's us in the `constructor` routine, which allows the hook to behave well and give us the `stat struct` we need:
+```c
+// Create a "legit" stat struct globally to pass to callees
+static void _setup_stat_struct(void) {
+    // Create a global stat struct for our file in case someone asks, this way
+    // when someone calls stat() or fstat() on our target, we can just return the
+    // slightly altered (new size) stat struct &skip the kernel, save syscalls
+    int result = __xstat(0x1337, FUZZ_TARGET, &st);
+    if (-1 == result) {
+        printf("Error creating stat struct for '%s' during load\n", FUZZ_TARGET);
+    }
+}
+```
+
+All in all, our entire harness looks like this now:
 ```c
 /* 
 Compiler flags: 
@@ -515,6 +531,8 @@ static void *_resolve_symbol(const char *symbol) {
 // Hook for __xstat 
 int __xstat(int __ver, const char* __filename, struct stat* __stat_buf) {
     // Resolve the real __xstat() on demand and maybe multiple times!
+    printf("LMFAO\n");
+    exit(-1);
     if (NULL == real_xstat) {
         real_xstat = _resolve_symbol("__xstat");
     }
@@ -591,6 +609,17 @@ static void _create_mem_mappings(void) {
     memset((void *)INPUT_ADDR, 0, (size_t)MAX_INPUT_SZ);
 }
 
+// Create a "legit" stat struct globally to pass to callees
+static void _setup_stat_struct(void) {
+    // Create a global stat struct for our file in case someone asks, this way
+    // when someone calls stat() or fstat() on our target, we can just return the
+    // slightly altered (new size) stat struct &skip the kernel, save syscalls
+    int result = __xstat(0x1337, FUZZ_TARGET, &st);
+    if (-1 == result) {
+        printf("Error creating stat struct for '%s' during load\n", FUZZ_TARGET);
+    }
+}
+
 #ifdef TEST
 // Used for testing, load /bin/ed into the input buffer and update its size info
 static void _test_func(void) {    
@@ -618,8 +647,10 @@ __attribute__((constructor)) static void _hook_load(void) {
     // If we're testing, load /bin/ed up into our input buffer and update size
 #ifdef TEST
     _test_func();
-#endif    
+#endif
+
+    // Setup global "legit" stat struct
+    _setup_stat_struct();
 }
 ```
 
-So now, if we're testing, objdump should actually `stat()` and get back a valid `stat struct` as if `/bin/ed` was the input file and not `fuzzme` aka `/bin/ls`. 
