@@ -239,3 +239,20 @@ h0mbre@ubuntu:~/blogpost$ LD_PRELOAD=/home/h0mbre/blogpost/blog_harness.so objdu
 So now we can have some fun. 
 
 ## __xstat() Hook
+
+So the purpose of this hook will be to lie to objdump and make it think it successfully `stat()` the input file. Remember, we're making a snapshot fuzzing harness so our objective is to constantly be creating new inputs and feeding them to objdump through this harness. Most importantly, our harness will need to be able to represent our variable length inputs (which will be stored purely in memory) as files. Each fuzzcase, the file length can change and our harness needs to accomodate that.
+
+My idea at this point was to create a somewhat "legit" `stat struct` that would normally be returned for our actual file `fuzzme` which is just a copy of `/bin/ls`. We can store this `stat struct` globally and only update the size field as each new fuzz case comes through. So the timeline of our snapshot fuzzing workflow would look something like:
+1. Our `constructor` function is called when our shared object is loaded
+2. Our `constructor` sets up a global "legit" `stat struct` that we can update for each fuzzcase and pass back to callers of `__xstat()` trying to `stat()` our fuzzing target
+3. The imaginary fuzzer runs objdump to the snapshot location
+4. Our `__xstat()` hook update the the global "legit" `stat struct` size field and copy the `stat struct` into the callee's buffer
+5. The imaginary fuzzer restores the state of objdump to its state at snapshot time
+6. The imaginary fuzzer copies a new input into harness and updates the input size
+7. Our `__xstat()` hook is called once again, and we repeat step 4, this process occurs over and over forever. 
+
+One important thing to keep in mind is that if the snapshot fuzzer is restoring objdump to its snapshot state every fuzzing iteration, we must be careful not to depend on any global mutable memory. The global `stat struct` will be safe since it will be instantiated during the `constructor` however, its size-field will be restored to its original value each fuzzing iteration by the fuzzer's snapshot restore routine. 
+
+We will also need a global, recognizable address to store variable mutable global data like the current input's size. Several snapshot fuzzers have the flexibility to ignore contiguous ranges of memory for restoration purposes. So if we're able to create some contiguous buffers in memory at recognizable addresses, we can have our imaginary fuzzer ignore those ranges for snapshot restorations. So we need to have a place to store the inputs, as well as information about their size. We would then somehow tell the fuzzer about these locations and when it generated a new input, it would copy it into the input location and then update the current input size information.
+
+So now our constructor has an additional job: setup the input location as well as the input size information. We can do this easily with a call to `mmap()` which will allow us to specify an address we want our mapping mapped to with the `MAP_FIXED` flag. 
