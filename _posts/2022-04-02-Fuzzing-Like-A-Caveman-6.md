@@ -702,7 +702,7 @@ We don't actually know how the returned `FILE *` will be used, it may not be use
 There is one key difference though. `fopen()` will actually obtain file descriptor for the underlying file and `fmemopen()`, since it is not actually openining a file, will not. So somewhere in the `FILE *` data structure, there is a file descriptor for the underlying file if returned from `fopen()` and there isn't one if returned from `fmemopen()`. This is very important as functions such as `int fileno(FILE *stream)` can parse a `FILE *` and return its underlying file descriptor to the caller. Objdump may want to do this for some reason and we need to be able to robustly handle it. So we need a way to know if someone is trying to use our faked `FILE *` underlying file descriptor.
 
 My idea for this was to simply find the struct member containing the file descriptor in the `FILE *` returned from `fmemopen()` and change it to be something ridiculous like `1337` so that if objdump ever tried to use that file descriptor we would know the source of it and could try to hook any interactions with the file descriptor. So now our `fopen64()` hook should look as follows:
-```
+```c
 // Our fopen hook, return a FILE* to the caller, also, if we are opening our
 // target make sure we're not able to write to the file
 FILE* fopen64(const char* pathname, const char* mode) {
