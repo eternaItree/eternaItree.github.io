@@ -137,6 +137,13 @@ However, if we compile and run that, we don't ever print and exit so our hook is
 
 Luckily, I'm not the first person with this problem, there is a [great answer on Stackoverflow about the very issue](https://stackoverflow.com/questions/5478780/c-and-ld-preload-open-and-open64-calls-intercepted-but-not-stat64) that describes how libc doesn't actually export `stat()` the same way it does for other functions like `open()` and `open64()`, instead it exports a symbol called `__xstat()` which has a slightly different signature and requires a new argument called `version` which is meant to describe which version of `stat struct` the caller is expecting. This is supposed to all happen magically under the hood but that's where we live now, so we have to make the magic happen ourselves. The same rules apply for `lstat()` and `fstat()` as well, they have `__lxstat()` and `__fxstat()` respectively.
 
+Interestingly, at least on my distribution of Ubuntu, there are no man 3 entries for `stat()`, which should've been a redflag to begin with: 
+```
+h0mbre@ubuntu:~/blogpost$ man 3 stat
+No manual entry for stat in section 3
+See 'man 7 undocumented' for help when manual pages are not available.
+```
+
 I found the definitions for the functions [here](https://refspecs.linuxfoundation.org/LSB_1.1.0/gLSB/baselib-xstat-1.html). So we can add the `__xstat()` hook to our shared object in place of the `stat()` and see if our luck changes. Our code now looks like this:
 ```c
 /* 
@@ -307,11 +314,11 @@ static void _create_mem_mappings(void) {
 }
 ```
 
-`mmap()` will actually map multiples of whatever the page size is on your system (typically 4096 bytes). So like, when we ask for `sizeof(size_t)` bytes for the mapping, `mmap()` is like: "Hmm, that's just a page dude" and gives us back a whole page from `0x1336000 - 0x1337000` not inclusive on the high-end. 
+`mmap()` will actually map multiples of whatever the page size is on your system (typically 4096 bytes). So, when we ask for `sizeof(size_t)` bytes for the mapping, `mmap()` is like: "Hmm, that's just a page dude" and gives us back a whole page from `0x1336000 - 0x1337000` not inclusive on the high-end. 
 
 **Random sidenote, be careful about arithmetic in definitions and macros as I've done here with `MAX_INPUT_SIZE`, it's very easy for the pre-processor to substitute your text for the definition keyword and ruin some order of operations or even overflow a specific primitive type like `int`.**
 
-Now that we have memory set up for the fuzzer to store inputs and information about the input's size, we can create that global stat struct. But we actually have a big problem. How can we call into `__xstat()` to get our "legit" `stat struct` if we have `__xstat()` hooked?? We would hit our own hook. To circumvent this, we can call `__xstat()` with a special `__ver` argument that we know will mean that it was called from our `constructor`, the variable is an `int` so let's go with `0x1337` as the special value. That way, in our hook, if we check `__ver` and it's `0x1337`, we know we are being called from the `constructor` and we can actually stat our real file and create a global "legit" `stat struct`. When I dumped a normal call by objdump to `__xstat()` the `__version` was always a value of `1` so we will patch it back to that inside our hook. Now our entire shared object source file should look like this:
+Now that we have memory set up for the fuzzer to store inputs and information about the input's size, we can create that global stat struct. But we actually have a big problem. How can we call into `__xstat()` to get our "legit" `stat struct` if we have `__xstat()` hooked? We would hit our own hook. To circumvent this, we can call `__xstat()` with a special `__ver` argument that we know will mean that it was called from our `constructor`, the variable is an `int` so let's go with `0x1337` as the special value. That way, in our hook, if we check `__ver` and it's `0x1337`, we know we are being called from the `constructor` and we can actually stat our real file and create a global "legit" `stat struct`. When I dumped a normal call by objdump to `__xstat()` the `__version` was always a value of `1` so we will patch it back to that inside our hook. Now our entire shared object source file should look like this:
 ```c
 /* 
 Compiler flags: 
@@ -649,3 +656,15 @@ __attribute__((constructor)) static void _hook_load(void) {
 }
 ```
 
+Now if we run this under `strace`, we notice that our two `stat()` calls are conspicuously missing.
+```
+close(3)                                = 0
+openat(AT_FDCWD, "fuzzme", O_RDONLY)    = 3
+fcntl(3, F_GETFD)                       = 0
+fcntl(3, F_SETFD, FD_CLOEXEC)           = 0
+```
+
+We no longer see the `stat()` calls before the `openat()` and the program does not break in any significant way. So this hook seems to be working appropriately. We now need to handle the `openat()` and make sure we don't actually interact with our input file, but instead trick objdump to interact with our input in memory.
+
+## Finding a Way to Hook `openat()`
+My non-expert intuition tells me theres probably a few ways in which a libc function could end up calling `openat()` under the hood. Those ways might include the wrappers `open()` as well as `fopen()`. We also need to be mindful of their `64` variants as well (`open64()`, `fopen64()`). So in order to figure out if one of those functions is our target, we can simply write hooks for all of them and see which ones get called for `fuzzme`. 
