@@ -761,4 +761,17 @@ h0mbre@ubuntu:~/blogpost$ LD_PRELOAD=/home/h0mbre/blogpost/blog_harness.so objdu
 objdump: fuzzme: Bad file descriptor
 ```
 
-My spidey-sense is telling me something tried to interact with a file descriptor of `1337`. 
+My spidey-sense is telling me something tried to interact with a file descriptor of `1337`. Let's run again under `strace` and see what happens.
+```
+h0mbre@ubuntu:~/blogpost$ strace -E LD_PRELOAD=/home/h0mbre/blogpost/blog_harness.so objdump -D fuzzme > /tmp/output.txt
+```
+
+In the output, we can see some syscalls to `fcntl()` and `fstat()` both being called with a file descriptor of `1337` which obviously doesn't exist in our objdump process, so we've been able to find the problem.
+```
+fcntl(1337, F_GETFD)                    = -1 EBADF (Bad file descriptor)
+prlimit64(0, RLIMIT_NOFILE, NULL, {rlim_cur=4*1024, rlim_max=4*1024}) = 0
+fstat(1337, 0x7fff4bf54c90)             = -1 EBADF (Bad file descriptor)
+fstat(1337, 0x7fff4bf54bf0)             = -1 EBADF (Bad file descriptor)
+```
+
+
