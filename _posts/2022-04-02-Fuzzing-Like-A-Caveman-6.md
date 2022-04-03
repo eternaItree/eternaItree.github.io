@@ -246,7 +246,7 @@ My idea at this point was to create a somewhat "legit" `stat struct` that would 
 1. Our `constructor` function is called when our shared object is loaded
 2. Our `constructor` sets up a global "legit" `stat struct` that we can update for each fuzzcase and pass back to callers of `__xstat()` trying to `stat()` our fuzzing target
 3. The imaginary fuzzer runs objdump to the snapshot location
-4. Our `__xstat()` hook updates the the global "legit" `stat struct` size field and copies the `stat struct` into the callee's buffer
+4. Our `__xstat()` hook updates the the global "legit" `stat struct` size field and copies the `stat struct` into the caller's buffer
 5. The imaginary fuzzer restores the state of objdump to its state at snapshot time
 6. The imaginary fuzzer copies a new input into harness and updates the input size
 7. Our `__xstat()` hook is called once again, and we repeat step 4, this process occurs over and over forever. 
@@ -460,7 +460,7 @@ So we have identified a problem, we need to **simulate** the fuzzer placing a re
 
 We also need to set up our global "legit" `stat struct`, the code to do that should look as follows. Remember, we pass a fake `__ver` variable to let the `__xstat()` hook know that it's us in the `constructor` routine, which allows the hook to behave well and give us the `stat struct` we need:
 ```c
-// Create a "legit" stat struct globally to pass to callees
+// Create a "legit" stat struct globally to pass to callers
 static void _setup_stat_struct(void) {
     // Create a global stat struct for our file in case someone asks, this way
     // when someone calls stat() or fstat() on our target, we can just return the
@@ -607,7 +607,7 @@ static void _create_mem_mappings(void) {
     memset((void *)INPUT_ADDR, 0, (size_t)MAX_INPUT_SZ);
 }
 
-// Create a "legit" stat struct globally to pass to callees
+// Create a "legit" stat struct globally to pass to callers
 static void _setup_stat_struct(void) {
     int result = __xstat(0x1337, FUZZ_TARGET, &st);
     if (-1 == result) {
