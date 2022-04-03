@@ -94,7 +94,7 @@ Disassembly of section .interp:
 Disassembly of section .note.ABI-tag:
 ```
 
-It works, now we can looking for functions to hook.
+It works, now we can start looking for functions to hook.
 
 ## Looking for Hooks
 First thing we need to do, is create a fake file name to give objdump so that we can start testing things out. We will copy `/bin/ls` into the current working directory and call it `fuzzme`. This will allow us to generically play around with the harness for testing purposes. Now we have our `strace` output, we know that objdump calls `stat()` on the path for our input file (`/bin/ls`) a couple of times before we get that call to `openat()`. Since we know our file hasn't been opened yet, and the syscall uses the path for the first arg, we can guess that this syscall results from the libc exported wrapper function for `stat()` or `lstat()`. I'm going to assume `stat()` since we aren't dealing with any symbolic links for `/bin/ls` on my box. We can add a hook for `stat()` to test to see if we hit it and check if it's being called for our target input file (now changed to `fuzzme`).
