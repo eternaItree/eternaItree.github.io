@@ -416,7 +416,7 @@ void overwrite_ops(int fd) {
 So now that we know where our ROP chain is, and where our faked function table is, and we have the perfect stack pivot gadget, the rest of this process is simply building a real ROP chain which I will leave out of this post. 
 
 As a first timer, this tiny bit of creativity to leverage the read ability to leak the addresses of `msg_msg` structs was enough to get me hooked. Here is a picture of the exploit in action:
-
+![](/assets/images/pwn/exploit_works.PNG)
 
 ### Miscellaneous 
 
