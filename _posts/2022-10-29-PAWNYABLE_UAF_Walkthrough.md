@@ -16,7 +16,7 @@ tags:
 
 ## Introduction
 
-I've been wanting to learn Linux Kernel exploitation for some time and a couple months ago [@ptrYudai] (https://twitter.com/ptrYudai) from [@zer0pts] (https://twitter.com/zer0pts) tweeted that they released the beta version of their website [PAWNYABLE!] (https://pawnyable.cafe/), which is a "resource for middle to advanced learners to study Binary Exploitation". The first section on the website with material already ready is "Linux Kernel", so this was a perfect place to start learning. 
+I've been wanting to learn Linux Kernel exploitation for some time and a couple months ago [@ptrYudai](https://twitter.com/ptrYudai) from [@zer0pts](https://twitter.com/zer0pts) tweeted that they released the beta version of their website [PAWNYABLE!](https://pawnyable.cafe/), which is a "resource for middle to advanced learners to study Binary Exploitation". The first section on the website with material already ready is "Linux Kernel", so this was a perfect place to start learning. 
 
 The author does a great job explaining everything you need to know to get started, things like: setting up a debugging environment, CTF-specific tips, modern kernel exploitation mitigations, using QEMU, manipulating images, etc, so this blogpost will focus exclusively on my experience with the challenge and the way I decided to solve it.
 
@@ -45,5 +45,5 @@ Next, I started working on the first challenge which is a stack-based buffer ove
 
 You can write an exploit that bypasses mitigations or not, it's up to you. I started slowly and wrote an exploit with no mitigations enabled, then slowly turned the mitigations up and changed the exploit as needed. 
 
-After that, I started working on a popular Linux kernel pwn challenge called "kernel-rop" from hxpCTF 2020. I followed along and worked alongside the following blogposts from [@\_lkmidas] (https://twitter.com/_lkmidas). 
+After that, I started working on a popular Linux kernel pwn challenge called "kernel-rop" from hxpCTF 2020. I followed along and worked alongside the following blogposts from [@\_lkmidas](https://twitter.com/_lkmidas). 
 
