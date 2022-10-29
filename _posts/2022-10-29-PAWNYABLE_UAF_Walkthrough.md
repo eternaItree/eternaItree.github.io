@@ -20,7 +20,7 @@ I've been wanting to learn Linux Kernel exploitation for some time and a couple 
 
 The author does a great job explaining everything you need to know to get started, things like: setting up a debugging environment, CTF-specific tips, modern kernel exploitation mitigations, using QEMU, manipulating images, per-CPU slab caches, etc, so this blogpost will focus exclusively on my experience with the challenge and the way I decided to solve it. I'm going to try and limit redundant information within this blogpost so if you have any questions, it's best to consult PAWNYABLE and the other linked resources. 
 
-### What I Started With
+## What I Started With
 
 PAWNYABLE ended up being a great way for me to start learning about Linux Kernel exploitation, mainly because I didn't have to spend any time getting up to speed on a kernel subsystem in order to start wading into the exploitation metagame. For instance, if you are the type of person who learns by doing, and you're first attempt at learning about this stuff was to write your own exploit for CVE-2022-32250, you would first have to spend a considerable amount of time learning about Netfilter. Instead, PAWNYABLE gives you a straightforward example of a vulnerability in one of a handful of bug-classes, and then gets to work showing you how you could exploit it. I think this strategy is great for beginners like me. It's worth noting that after having spent some time with PAWNYABLE, I have been able to write some exploits for real world bugs similar to CVE-2022-32250, so my strategy did prove to be fruitful (at least for me). 
 
@@ -30,7 +30,7 @@ The Linux Kernel, as a target, seemed like a happy marriage between multiple thi
 
 So coming into this, I had a pretty good foundation of basic binary exploitation (mostly dated Windows and Linux userland stuff), a few years of C development (to include a few Linux Kernel modules), and some reverse engineering skills. 
 
-### What I Did
+## What I Did
 
 To get started, I read through the following PAWNYABLE sections (section names have been Google translated to English):
 
@@ -144,7 +144,7 @@ At a high-level, UAFs are generally exploited by creating the UAF condition, so 
 
 So if we allocated a `g_buf` of size `0x400` and then freed it, we need to place another object in its place. This new object would then be the target of our reads and writes. 
 
-### KASLR Bypass
+## KASLR Bypass
 
 The first thing we need to do is bypass KASLR by leaking some address that is a known static offset from the kernel image base. I started searching for objects that have leakable members and again, @ptrYudai came to the rescue with a catalog on [useful Linux Kernel data structures](https://ptr-yudai.hatenablog.com/entry/2020/03/16/165628) for exploitation. This lead me to the [`tty_struct`](https://elixir.bootlin.com/linux/latest/source/include/linux/tty.h#L195) which is allocated on the same slab cache as our `0x400` buffer, the `kmalloc-1024`. The `tty_struct` has a field called `tty_operations` which is a pointer to a function table that is a static offset from the kernel base. So if we can leak the address of `tty_operations` we will have bypassed KASLR. This struct was used by [NCCGROUP for the same purpose in their exploit of CVE-2022-32250](https://research.nccgroup.com/2022/09/01/settlers-of-netlink-exploiting-a-limited-uaf-in-nf_tables-cve-2022-32250/). 
 
@@ -208,7 +208,7 @@ uint64_t leak_ops(int fd) {
 
 There's a confusing part about `AND`ing off the lower 12 bits of the leaked value and that's because I kept getting one of two values during multiple runs of the exploit within the same boot. This is probably because there's two kinds of `tty_structs` that can be allocated and they are allocated in pairs. This `if` `else if` block just handles both cases and solves the kernel base for us. So at this point we have bypassed KASLR because we know the base address the kernel is loaded at. 
 
-### RIP Control
+## RIP Control
 
 Next, we need someway to high-jack execution. Luckily, we can use the same data structure, `tty_struct` as we can write to the object using `module_write` and we can overwrite the pointer value for `tty_struct->ops`. 
 
@@ -266,7 +266,7 @@ We will push a value from `RDX` onto the stack, and then later pop that value in
 
 So now we have a new problem, how do we create a fake function table and ROP chain in the kernel heap AND figure out where we stored them?
 
-### Creating and Locating a ROP Chain and Fake Function Table
+## Creating/Locating a ROP Chain and Fake Function Table
 
 This is where I started to diverge from the author's exploitation strategy. I couldn't quite follow along with the intended solution for this problem, so I began searching for other ways. With our extremely powerful read capability in mind, I remembered the [`msg_msg`](https://elixir.bootlin.com/linux/latest/source/include/linux/msg.h#L9) struct from @ptrYudai's aforementioned structure catalog, and realized that the structure was perfect for our purposes as it:
 
@@ -418,7 +418,7 @@ So now that we know where our ROP chain is, and where our faked function table i
 As a first timer, this tiny bit of creativity to leverage the read ability to leak the addresses of `msg_msg` structs was enough to get me hooked. Here is a picture of the exploit in action:
 ![](/assets/images/pwn/exploit_works.PNG)
 
-### Miscellaneous 
+## Miscellaneous 
 
 There were some things I tried to do to increase the exploit's reliability. 
 
