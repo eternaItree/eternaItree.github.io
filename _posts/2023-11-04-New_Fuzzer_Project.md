@@ -192,4 +192,11 @@ Program Headers:
 ```
 
 We can see that there are 4 loadable segments. They also have several attributes we need to be keeping track of:
-- `Flags` describes the memory permissions this segment should have, we have 3 distinct memory protection schemes `READ`, `READ | EXECUTE`, and `READ | WRITE`. 
+- `Flags` describes the memory permissions this segment should have, we have 3 distinct memory protection schemes `READ`, `READ | EXECUTE`, and `READ | WRITE`
+- `Offset` describes how far into the physical file contents we can expect to find this segment
+- `PhysAddr` we don't much care about
+- `VirtAddr` the virtual address this segment should be loaded at, you can tell that the first segment value for this is `0x0000000000000000` which means that it has no expectations about where it's to be loaded.
+- `MemSiz` how large the segment should be in virtual memory
+- `Align` how to align the segments in virtual memory
+
+
