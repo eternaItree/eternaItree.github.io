@@ -22,3 +22,11 @@ Another approach, is to effectively sandbox your target in such a way that you c
 
 And so, in my pursuit of understanding how Nyx works so that I could build a fuzzer ontop of it, I revisited Gamozolabs' stream paper review he did on the Nyx paper. It's a great stream, the Nyx authors were present in Twitch chat and so there were some good back and forths and the stream really highlights what an amazing utility Nyx is for fuzzing. But something *else* besides Nyx piqued my interest during the stream! During the stream, gamozo described a fuzzing architecture he had previously built that utilized the Bochs emulator to snapshot fuzz complex targets and entire systems. This architecture sounded extremely interesting and clever to me, and coincidentally it had several attributes in common with a sandboxing utility I had been designing with a friend for fuzzing as well. 
 
+This fuzzing architecture seemed to meet several criteria that I personally value when it comes to doing a fuzzer development project on the blog:
+- it is relatively simple in its design,
+- it allows for almost endless introspection utilities to be added,
+- it can scale and be used on my servers I bought for fuzzing (but haven't used yet because I don't have a fuzzer!),
+- it can fuzz the Linux Kernel,
+- it can fuzz userland and kernel components on other OSes and platforms (Windows, MacOS),
+- it will allow me to do a lot of learning and low-level computing research
+
