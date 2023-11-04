@@ -346,7 +346,7 @@ for segment in load_segments.iter() {
 After that is successful, our ELF image is basically complete. We can just jump to it and start executing! Just kidding, we have to first setup a stack for the new "process" which I learned was a huge pain. 
 
 ## Setting Up a Stack for Bochs
-I spent a lot of time on this and there actually might still be bugs! This was the hardest part I'd say as everything else was pretty much straightforward. To complete this part, I heavily leaned on this resource which describes how x86 32-bit application stacks are fabricated: https://articles.manugarg.com/aboutelfauxiliaryvectors
+I spent a lot of time on this and there actually might still be bugs! This was the hardest part I'd say as everything else was pretty much straightforward. To complete this part, I heavily leaned on this resource which describes how x86 32-bit application stacks are fabricated: https://articles.manugarg.com/aboutelfauxiliaryvectors.
 
 Here is an extremely useful diagram describing the 32-bit stack cribbed from the linked resource above:
 ```
