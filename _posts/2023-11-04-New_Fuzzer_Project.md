@@ -29,7 +29,10 @@ This fuzzing architecture seemed to meet several criteria that I personally valu
 - it can scale and be used on my servers I bought for fuzzing (but haven't used yet because I don't have a fuzzer!),
 - it can fuzz the Linux Kernel,
 - it can fuzz userland and kernel components on other OSes and platforms (Windows, MacOS),
-- it will allow me to do a lot of learning and low-level computing research and learning
+- it is pretty unique in its design compared to open source fuzzing tools that exist,
+- it can be designed from scratch to work well with existing flexible tooling such as LibAFL,
+- there is no source code available anywhere publicly, so I'm free to implement it from scratch the way I see fit,
+- it will allow me to do a lot of learning and low-level computing research and learning.
 
 So all things considered, this seemed like the ideal project to implement on the blog and so I reached out to gamozo to make sure he'd be ok with it as I didn't want to be seen as clout chasing off of his ideas and he was very charitable and encouraged me to do it. So huge thanks to gamozo for sharing so much content and we're off to developing the fuzzer. 
 
