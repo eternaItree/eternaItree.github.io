@@ -158,3 +158,38 @@ pub struct ElfHeader {
     pub shrstrndx: u16,
 }
 ```
+
+We really care about a few of these struct members. For one, we definitely need to know the `entry`, this is where you're supposed to start executing from. So eventually, our code will jump to this address to start executing the test program. We also care about `phoff`. This is the offset into the ELF where we can find the base of the Program Header table. This is just an array of Program Headers basically. Along with `phoff`, we also need to know the number of entries in that array and the size of each entry so that we can parse them. That is where `phnum` and `phentsize` come in handy respectively. Given the offset of index 0 in the array, the number of array members, and the size of each member, we can parse the Program Headers. 
+
+A single program header, ie, a single entry in the array, can be synthesized into the following data structure:
+```rust
+#[derive(Debug)]
+pub struct ProgramHeader {
+    pub typ: u32,
+    pub flags: u32,
+    pub offset: u64,
+    pub vaddr: u64,
+    pub paddr: u64,
+    pub filesz: u64,
+    pub memsz: u64,
+    pub align: u64, 
+}
+```
+
+These program headers describe segments in the ELF image as it should exist in memory. In particular, we care about the loadable segments with type `LOAD`, as these segments are the ones we have to account for when loading the ELF image. Take our `readelf` output for example:
+```console
+Program Headers:
+  Type           Offset             VirtAddr           PhysAddr
+                 FileSiz            MemSiz              Flags  Align
+  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000008158 0x0000000000008158  R      0x1000
+  LOAD           0x0000000000009000 0x0000000000009000 0x0000000000009000
+                 0x0000000000094d01 0x0000000000094d01  R E    0x1000
+  LOAD           0x000000000009e000 0x000000000009e000 0x000000000009e000
+                 0x00000000000285e0 0x00000000000285e0  R      0x1000
+  LOAD           0x00000000000c6de0 0x00000000000c7de0 0x00000000000c7de0
+                 0x0000000000005350 0x0000000000006a80  RW     0x1000
+```
+
+We can see that there are 4 loadable segments. They also have several attributes we need to be keeping track of:
+- `Flags` describes the memory permissions this segment should have, we have 3 distinct memory protection schemes `READ`, `READ | EXECUTE`, and `READ | WRITE`. 
