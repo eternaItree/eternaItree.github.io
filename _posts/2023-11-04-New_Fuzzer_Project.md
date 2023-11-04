@@ -41,6 +41,11 @@ Also huge shoutout to [@is_eqv](https://twitter.com/is_eqv) and [@ms_s3c](https:
 
 Another huge shoutout to [@Kharosx0](https://twitter.com/Kharosx0) for helping me understand Bochs and for answering all my questions about my design intentions, another very charitable person who is always helping out on the Fuzzing discord.
 
+## Misc
+Please let me know if you find any programming errors or have some nitpicks with the code. I've tried to heavily comment everything, and given that I cobbled this together over the course of a couple of weekends, there are probably some issues with the code. I also haven't really fleshed out how the repository will look, or what files will be called, or anything like that so please be patient with the code-quality. This is mostly for learning purposes and at this point it is just a proof-of-concept of loading Bochs into memory to explain the first portion of the architecture. 
+
+I've decided to name the project "Lucid" for now, as reference to lucid dreaming since our fuzz target is in somewhat of a dream state being executed within a simulator. And it sounds kind of cool? 
+
 ## Bochs
 What is Bochs? Good question. [Bochs](https://bochs.sourceforge.io/) is an x86 full-system emulator capable of running an entire operating system with software-simulated hardware devices. In short, it's a JIT-less, smaller, less-complex emulation tool similar to QEMU but with way less use-cases and way less performant. Instead of taking QEMU's approach of "let's emulate anything and everything and do it with good performance", Bochs has taken the approach of "let's emulate an entire x86 system 100% in software without worrying about performance for the most part. This approach has its obvious drawbacks, but if you are only interested in running x86 systems, Bochs is a great utility. We are going to use Bochs as the target execution engine in our fuzzer. Our target code will run inside Bochs. So if we are fuzzing the Linux Kernel for instance, that kernel will live and execute inside Bochs. Bochs is written in C++ and apparently still maintained, but do not expect much code changes or rapid development, the last release was over 2 years ago. 
 
@@ -272,4 +277,105 @@ fn initial_mmap(size: usize) -> Result<usize, LucidErr> {
 
     Ok(result as usize)
 }
+```
+
+So now we have carved out enough memory to write the loadable segments to. The segment data is sourced from the file of course, and so the first thing we do is once again iterate through the Program Headers and extract all the relevant data we need to do a `memcpy` from the file data in memory, to the carved out memory we just created. You can see that logic here:
+```rust
+let mut load_segments = Vec::new();
+    for ph in elf.program_headers.iter() {
+        if ph.is_load() {
+            load_segments.push((
+                ph.flags,               // segment.0
+                ph.vaddr    as usize,   // segment.1
+                ph.memsz    as usize,   // segment.2
+                ph.offset   as usize,   // segment.3
+                ph.filesz   as usize,   // segment.4
+            ));
+        }
+    }
+```
+
+After the segment metadata has been extracted, we can copy the contents over as well as call `mprotect` on the segment in memory so that its permissions perfectly match the `Flags` segment metadata we discussed earlier. That logic is here:
+```rust
+// Iterate through the loadable segments and change their perms and then 
+// copy the data over
+for segment in load_segments.iter() {
+    // Copy the binary data over, the destination is where in our process
+    // memory we're copying the binary data to. The source is where we copy
+    // from, this is going to be an offset into the binary data in the file,
+    // len is going to be how much binary data is in the file, that's filesz 
+    // This is going to be unsafe no matter what
+    let len = segment.4;
+    let dst = (addr + segment.1) as *mut u8;
+    let src = (elf.data[segment.3..segment.3 + len]).as_ptr();
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(src, dst, len);
+    }
+
+    // Calculate the `mprotect` address by adding the mmap address plus the
+    // virtual address offset, we also mask off the last 0x1000 bytes so 
+    // that we are always page-aligned as required by `mprotect`
+    let mprotect_addr = ((addr + segment.1) & !(PAGE_SIZE - 1))
+        as *mut libc::c_void;
+
+    // Get the length
+    let mprotect_len = segment.2 as libc::size_t;
+
+    // Get the protection
+    let mut mprotect_prot = 0 as libc::c_int;
+    if segment.0 & 0x1 == 0x1 { mprotect_prot |= libc::PROT_EXEC; }
+    if segment.0 & 0x2 == 0x2 { mprotect_prot |= libc::PROT_WRITE; }
+    if segment.0 & 0x4 == 0x4 { mprotect_prot |= libc::PROT_READ; }
+
+    // Call `mprotect` to change the mapping perms
+    let result = unsafe {
+        libc::mprotect(
+            mprotect_addr,
+            mprotect_len,
+            mprotect_prot
+        )
+    };
+
+    if result < 0 {
+        return Err(LucidErr::from("Failed to `mprotect` memory for Bochs"));
+    }
+}
+```
+
+After that is successful, our ELF image is basically complete. We can just jump to it and start executing! Just kidding, we have to first setup a stack for the new "process" which I learned was a huge pain. 
+
+## Setting Up a Stack for Bochs
+I spent a lot of time on this and there actually might still be bugs! This was the hardest part I'd say as everything else was pretty much straightforward. To complete this part, I heavily leaned on this resource which describes how x86 32-bit application stacks are fabricated: https://articles.manugarg.com/aboutelfauxiliaryvectors
+
+Here is an extremely useful diagram describing the 32-bit stack cribbed from the linked resource above:
+```
+position            content                     size (bytes) + comment
+  ------------------------------------------------------------------------
+  stack pointer ->  [ argc = number of args ]     4
+                    [ argv[0] (pointer) ]         4   (program name)
+                    [ argv[1] (pointer) ]         4
+                    [ argv[..] (pointer) ]        4 * x
+                    [ argv[n - 1] (pointer) ]     4
+                    [ argv[n] (pointer) ]         4   (= NULL)
+
+                    [ envp[0] (pointer) ]         4
+                    [ envp[1] (pointer) ]         4
+                    [ envp[..] (pointer) ]        4
+                    [ envp[term] (pointer) ]      4   (= NULL)
+
+                    [ auxv[0] (Elf32_auxv_t) ]    8
+                    [ auxv[1] (Elf32_auxv_t) ]    8
+                    [ auxv[..] (Elf32_auxv_t) ]   8
+                    [ auxv[term] (Elf32_auxv_t) ] 8   (= AT_NULL vector)
+
+                    [ padding ]                   0 - 16
+
+                    [ argument ASCIIZ strings ]   >= 0
+                    [ environment ASCIIZ str. ]   >= 0
+
+  (0xbffffffc)      [ end marker ]                4   (= NULL)
+
+  (0xc0000000)      < bottom of stack >           0   (virtual)
+  ------------------------------------------------------------------------
 ```
