@@ -228,3 +228,48 @@ if mapping_size % PAGE_SIZE > 0 {
     mapping_size += PAGE_SIZE - (mapping_size % PAGE_SIZE);
 }
 ```
+
+We iterate through all of the Program Headers in the parsed ELF, and we just see where the largest "`end_addr`" is. This accounts for the page-aligning padding in between segments as well. And as you can see, we also page-align the last segment as well by making sure that the size is rounded up to the nearest page. At this point we know how much memory we need to `mmap` to hold the loadable ELF segments. We `mmap` a contiguous range of memory here:
+```rust
+// Call `mmap` to map memory into our process to hold all of the loadable 
+// program header contents in a contiguous range. Right now the perms will be
+// generic across the entire range as PROT_WRITE,
+// later we'll go back and `mprotect` them appropriately
+fn initial_mmap(size: usize) -> Result<usize, LucidErr> {
+    // We don't want to specify a fixed address
+    let addr = LOAD_TARGET as *mut libc::c_void;
+
+    // Length is straight forward
+    let length = size as libc::size_t;
+
+    // Set the protections for now to writable
+    let prot = libc::PROT_WRITE;
+
+    // Set the flags, this is anonymous memory
+    let flags = libc::MAP_ANONYMOUS | libc::MAP_PRIVATE;
+
+    // We don't have a file to map, so this is -1
+    let fd = -1 as libc::c_int;
+
+    // We don't specify an offset 
+    let offset = 0 as libc::off_t;
+
+    // Call `mmap` and make sure it succeeds
+    let result = unsafe {
+        libc::mmap(
+            addr,
+            length,
+            prot,
+            flags,
+            fd,
+            offset
+        )
+    };
+
+    if result == libc::MAP_FAILED {
+        return Err(LucidErr::from("Failed to `mmap` memory for Bochs"));
+    }
+
+    Ok(result as usize)
+}
+```
