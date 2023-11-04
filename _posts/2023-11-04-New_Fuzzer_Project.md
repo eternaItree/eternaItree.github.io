@@ -380,4 +380,4 @@ position            content                     size (bytes) + comment
   ------------------------------------------------------------------------
 ```
 
-When we pass arguments to a process on the command line like `ls / -laht`, the Linux OS has to load the `ls` ELF into memory and create its environment. In this example, we passed a couple argument values to the process as well `/` and `-laht`. The way that the x86_64 passes these arguments to the process is on the stack via 
+When we pass arguments to a process on the command line like `ls / -laht`, the Linux OS has to load the `ls` ELF into memory and create its environment. In this example, we passed a couple argument values to the process as well `/` and `-laht`. The way that the x86_64 passes these arguments to the process is on the stack via the argument vector or `argv` for short, which is an array of string pointers. The number of arguments is represented by the argument count or `argc`. The first member of `argv` is usually the name of the executable that was passed on the command line, so in our example it would be `ls`. 
