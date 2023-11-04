@@ -379,3 +379,5 @@ position            content                     size (bytes) + comment
   (0xc0000000)      < bottom of stack >           0   (virtual)
   ------------------------------------------------------------------------
 ```
+
+When we pass arguments to a process on the command line like `ls / -laht`, the Linux OS has to load the `ls` ELF into memory and create its environment. In this example, we passed a couple argument values to the process as well `/` and `-laht`. The way that the x86_64 passes these arguments to the process is on the stack via 
