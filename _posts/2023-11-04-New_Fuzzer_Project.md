@@ -36,4 +36,6 @@ This fuzzing architecture seemed to meet several criteria that I personally valu
 
 So all things considered, this seemed like the ideal project to implement on the blog and so I reached out to gamozo to make sure he'd be ok with it as I didn't want to be seen as clout chasing off of his ideas and he was very charitable and encouraged me to do it. So huge thanks to gamozo for sharing so much content and we're off to developing the fuzzer. 
 
+Also huge shoutout to [@is_eqv](https://twitter.com/is_eqv) and [@ms_s3c](https://twitter.com/ms_s3c) at least two of the Nyx authors who are always super friendly and charitable with their time/answering questions. Some great people to have around.  
+
 ## Fuzzer Architecture
