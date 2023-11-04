@@ -57,4 +57,85 @@ So in general, this is how our fuzzing setup should look:
 In order to provide a sandboxed environment, we must load an executable Bochs image into our own fuzzer process. So for this, I've chosen to build Bochs as an ELF and then load the ELF into my fuzzer process in memory. Let's dive into how that has been accomplished thus far. 
 
 ## Loading an ELF In Memory
-So in order to make this portion of loading Bochs in memory in the most simplistic way possible, I've chosen to compile Bochs as a `-static-pie` ELF. Now this means that the built ELF has no expectations about where it is loaded. In its `_start` routine, it actually has all of the logic of the normal OS ELF loader necessary to perform all of its own relocations. How cool is that? But before we get too far ahead of ourselves, the first goal will just be to simply build and load a `-static-pie` test program and make sure we can do that correctly.  
+So in order to make this portion of loading Bochs in memory in the most simplistic way possible, I've chosen to compile Bochs as a `-static-pie` ELF. Now this means that the built ELF has no expectations about where it is loaded. In its `_start` routine, it actually has all of the logic of the normal OS ELF loader necessary to perform all of its own relocations. How cool is that? But before we get too far ahead of ourselves, the first goal will just be to simply build and load a `-static-pie` test program and make sure we can do that correctly. 
+
+In order to make sure we have everything correctly implemented, we'll make sure that the test program can correctly access any command line arguments we pass and can execute and exit.
+```c
+#include <stdio.h>
+#include <unistd.h>
+
+int main(int argc, char *argv[]) {
+    printf("Argument count: %d\n", argc);
+    printf("Args:\n");
+    for (int i = 0; i < argc; i++) {
+        printf("   -%s\n", argv[i]);
+    }
+
+    size_t iters = 0;
+    while (1) {
+        printf("Test alive!\n");
+        sleep(1);
+        iters++;
+
+        if (iters > 5) { return 0; }
+    }
+}
+```
+Remember, at this point we don't sandbox our loaded program at all, all we're trying to do at this point is load it in our fuzzer virtual address space and jump to it and make sure the stack and everything is correctly setup. So we could run into issues that aren't real issues if jump straight into executing Bochs at this point.
+
+So compiling the `test` program and examining it with `readelf -l`, we can see that there is actually a `DYNAMIC` segment. Likely because of the relocations that need to be performed during the aforementioned `_start` routine.
+
+```console
+dude@lol:~/lucid$ gcc test.c -o test -static-pie
+dude@lol:~/lucid$ file test
+test: ELF 64-bit LSB shared object, x86-64, version 1 (GNU/Linux), dynamically linked, BuildID[sha1]=6fca6026edb756fa32c966844b29529d579e83b9, for GNU/Linux 3.2.0, not stripped
+dude@lol:~/lucid$ readelf -l test
+
+Elf file type is DYN (Shared object file)
+Entry point 0x9f50
+There are 12 program headers, starting at offset 64
+
+Program Headers:
+  Type           Offset             VirtAddr           PhysAddr
+                 FileSiz            MemSiz              Flags  Align
+  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000008158 0x0000000000008158  R      0x1000
+  LOAD           0x0000000000009000 0x0000000000009000 0x0000000000009000
+                 0x0000000000094d01 0x0000000000094d01  R E    0x1000
+  LOAD           0x000000000009e000 0x000000000009e000 0x000000000009e000
+                 0x00000000000285e0 0x00000000000285e0  R      0x1000
+  LOAD           0x00000000000c6de0 0x00000000000c7de0 0x00000000000c7de0
+                 0x0000000000005350 0x0000000000006a80  RW     0x1000
+  DYNAMIC        0x00000000000c9c18 0x00000000000cac18 0x00000000000cac18
+                 0x00000000000001b0 0x00000000000001b0  RW     0x8
+  NOTE           0x00000000000002e0 0x00000000000002e0 0x00000000000002e0
+                 0x0000000000000020 0x0000000000000020  R      0x8
+  NOTE           0x0000000000000300 0x0000000000000300 0x0000000000000300
+                 0x0000000000000044 0x0000000000000044  R      0x4
+  TLS            0x00000000000c6de0 0x00000000000c7de0 0x00000000000c7de0
+                 0x0000000000000020 0x0000000000000060  R      0x8
+  GNU_PROPERTY   0x00000000000002e0 0x00000000000002e0 0x00000000000002e0
+                 0x0000000000000020 0x0000000000000020  R      0x8
+  GNU_EH_FRAME   0x00000000000ba110 0x00000000000ba110 0x00000000000ba110
+                 0x0000000000001cbc 0x0000000000001cbc  R      0x4
+  GNU_STACK      0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000000000 0x0000000000000000  RW     0x10
+  GNU_RELRO      0x00000000000c6de0 0x00000000000c7de0 0x00000000000c7de0
+                 0x0000000000003220 0x0000000000003220  R      0x1
+
+ Section to Segment mapping:
+  Segment Sections...
+   00     .note.gnu.property .note.gnu.build-id .note.ABI-tag .gnu.hash .dynsym .dynstr .rela.dyn .rela.plt 
+   01     .init .plt .plt.got .plt.sec .text __libc_freeres_fn .fini 
+   02     .rodata .stapsdt.base .eh_frame_hdr .eh_frame .gcc_except_table 
+   03     .tdata .init_array .fini_array .data.rel.ro .dynamic .got .data __libc_subfreeres __libc_IO_vtables __libc_atexit .bss __libc_freeres_ptrs 
+   04     .dynamic 
+   05     .note.gnu.property 
+   06     .note.gnu.build-id .note.ABI-tag 
+   07     .tdata .tbss 
+   08     .note.gnu.property 
+   09     .eh_frame_hdr 
+   10     
+   11     .tdata .init_array .fini_array .data.rel.ro .dynamic .got
+``` 
+
