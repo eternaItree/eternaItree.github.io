@@ -199,4 +199,32 @@ We can see that there are 4 loadable segments. They also have several attributes
 - `MemSiz` how large the segment should be in virtual memory
 - `Align` how to align the segments in virtual memory
 
+For our very simplistic use-case of only loading a `-static-pie` ELF that we ourselves create, we can basically ignore all the other portions of the parsed ELF. 
 
+## Loading the ELF
+Now that we've successfully parsed out the relevant attributes of the ELF file, we can create an executable image in memory. For now, I've chosen to only implement what's needed in a Linux environment, but there's no reason why we couldn't load this ELF into our memory if we happened to be a Windows userland process. That's kind of why this whole design is cool. At some point, maybe someone will want Windows support and we'll add it. 
+
+The first thing we need to do, is calculate the size of the virtual memory that we need in order to load the ELF based on the combined size of the segments that are marked `LOAD`. We also have to keep in mind that there is some padding after the segments that aren't page aligned, so to do this, I used the following logic:
+```rust
+// Read the executable file into memory
+let data = read(BOCHS_IMAGE).map_err(|_| LucidErr::from(
+    "Unable to read binary data from Bochs binary"))?;
+
+// Parse ELF 
+let elf = parse_elf(&data)?;
+
+// We need to iterate through all of the loadable program headers and 
+// determine the size of the address range we need
+let mut mapping_size: usize = 0;
+for ph in elf.program_headers.iter() {
+    if ph.is_load() {
+        let end_addr = (ph.vaddr + ph.memsz) as usize;
+        if mapping_size < end_addr { mapping_size = end_addr; }
+    }
+}
+
+// Round the mapping up to a page
+if mapping_size % PAGE_SIZE > 0 {
+    mapping_size += PAGE_SIZE - (mapping_size % PAGE_SIZE);
+}
+```
