@@ -51,4 +51,4 @@ Going a bit deeper, this setup requires us to sandbox Bochs and run it inside of
 Secondly, it also means that the entirety of Bochs' state will be contained within our sandbox, which should enable us to reset Bochs' state more easily instead of it being a remote process. In a paradigm where Bochs executes as intended as a normal Linux process for example, resetting its state is not trivial and may leave you making either Kernel modifications or writing your own Kernel driver. Neither of which I feel like doing for the simple purpose of resetting Bochs. 
 
 So in general, this is how our fuzzing setup should look:
-![](/assets/images/pwn/FuzzerArch.PNG)
+![Fuzzer Architecture](/assets/images/pwn/FuzzerArch.PNG)
