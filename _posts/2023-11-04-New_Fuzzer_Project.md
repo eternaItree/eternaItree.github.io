@@ -36,10 +36,50 @@ This fuzzing architecture seemed to meet several criteria that I personally valu
 
 So all things considered, this seemed like the ideal project to implement on the blog and so I reached out to Gamozo to make sure he'd be ok with it as I didn't want to be seen as clout chasing off of his ideas and he was very charitable and encouraged me to do it. So huge thanks to Gamozo for sharing so much content and we're off to developing the fuzzer. 
 
-Also huge shoutout to [@is_eqv](https://twitter.com/is_eqv) and [@ms_s3c](https://twitter.com/ms_s3c) at least two of the Nyx authors who are always super friendly and charitable with their time/answering questions. Some great people to have around.  
+Also huge shoutout to [@is_eqv](https://twitter.com/is_eqv) and [@ms_s3c](https://twitter.com/ms_s3c) at least two of the Nyx authors who are always super friendly and charitable with their time/answering questions. Some great people to have around.
+
+Another huge shoutout to [@Kharosx0](https://twitter.com/Kharosx0) for helping me understand Bochs and for answering all my questions about my design intentions, another very charitable person who is always helping out on the Fuzzing discord.
+
+```console
+dude@ubuntu:~/lucid/target/release$ ./lucid --bochs-args -AAAAA -BBBBBBBBBB
+[07:11:49] lucid> Loading Bochs...
+[07:11:49] lucid> Bochs loaded { Entry: 0xA3DB0, RSP: 0x7FC5A23AF000 }
+========================================================================
+                        Bochs x86 Emulator 2.7
+              Built from SVN snapshot on August  1, 2021
+                Timestamp: Sun Aug  1 10:07:00 CEST 2021
+========================================================================
+Usage: bochs [flags] [bochsrc options]
+
+  -n               no configuration file
+  -f configfile    specify configuration file
+  -q               quick start (skip configuration interface)
+  -benchmark N     run Bochs in benchmark mode for N millions of emulated ticks
+  -dumpstats N     dump Bochs stats every N millions of emulated ticks
+  -r path          restore the Bochs state from path
+  -log filename    specify Bochs log file name
+  -unlock          unlock Bochs images leftover from previous session
+  --help           display this help and exit
+  --help features  display available features / devices and exit
+  --help cpu       display supported CPU models and exit
+
+For information on Bochs configuration file arguments, see the
+bochsrc section in the user documentation or the man page of bochsrc.
+00000000000p[      ] >>PANIC<< command line arg '-AAAAA' was not understood
+00000000000e[SIM   ] notify called, but no bxevent_callback function is registered
+========================================================================
+Bochs is exiting with the following message:
+[      ] command line arg '-AAAAA' was not understood
+========================================================================
+00000000000i[SIM   ] quit_sim called with exit code 1
+```
 
 ## Bochs
 What is Bochs? Good question. [Bochs](https://bochs.sourceforge.io/) is an x86 full-system emulator capable of running an entire operating system with software-simulated hardware devices. In short, it's a JIT-less, smaller, less-complex emulation tool similar to QEMU but with way less use-cases and way less performant. Instead of taking QEMU's approach of "let's emulate anything and everything and do it with good performance", Bochs has taken the approach of "let's emulate an entire x86 system 100% in software without worrying about performance for the most part. This approach has its obvious drawbacks, but if you are only interested in running x86 systems, Bochs is a great utility. We are going to use Bochs as the target execution engine in our fuzzer. Our target code will run inside Bochs. So if we are fuzzing the Linux Kernel for instance, that kernel will live and execute inside Bochs. Bochs is written in C++ and apparently still maintained, but do not expect much code changes or rapid development, the last release was over 2 years ago. 
 
 ## Fuzzer Architecture
-This is where we discuss how the fuzzer will be designed according to the information laid out on stream by Gamozo. 
+This is where we discuss how the fuzzer will be designed according to the information laid out on stream by Gamozo. In an effort to isolate Bochs from the user's OS and Kernel, we will sandbox Bochs so that it cannot interact wtih our operating system. This allows us to achieve a few things, chiefly this should make Bochs deterministic. As Gamozo explains on stream, isolating Bochs from the operating system, prevents Bochs from accessing any random/randomish data sources. This means that we will prevent Bochs from making syscalls into the kernel as well as executing any instructions that retrieve hardware sourced data such as `CPUID` or something similar. I actually haven't given much thought to the latter yet, but syscalls I have a plan for. With Bochs isolated from the operating system, we can expect it to behave the same way each fuzzing iteration. Given Fuzzing Input A, Bochs should execute exactly the same way for 1 trillion successive iterations.
+
+Secondly, it also means that the entirety of Bochs' state will be contained within our sandbox, which should enable us to reset Bochs' state more easily instead of it being a remote process. In a paradigm where Bochs executes as intended as a normal Linux process for example, 
+
+
