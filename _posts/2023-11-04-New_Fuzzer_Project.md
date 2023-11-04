@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
     }
 }
 ```
-Remember, at this point we don't sandbox our loaded program at all, all we're trying to do at this point is load it in our fuzzer virtual address space and jump to it and make sure the stack and everything is correctly setup. So we could run into issues that aren't real issues if jump straight into executing Bochs at this point.
+Remember, at this point we don't sandbox our loaded program at all, all we're trying to do at this point is load it in our fuzzer virtual address space and jump to it and make sure the stack and everything is correctly setup. So we could run into issues that aren't real issues if we jump straight into executing Bochs at this point.
 
 So compiling the `test` program and examining it with `readelf -l`, we can see that there is actually a `DYNAMIC` segment. Likely because of the relocations that need to be performed during the aforementioned `_start` routine.
 
@@ -138,4 +138,23 @@ Program Headers:
    10     
    11     .tdata .init_array .fini_array .data.rel.ro .dynamic .got
 ``` 
+So what portions of the this ELF image do we actually care about for our loading purposes? We probably don't need most of this information to simply get the ELF loaded and running. At first, I didn't know what I needed so I just parsed all of the ELF headers. 
 
+Keeping in mind that this ELF parsing code doesn't need to be robust, because we are only using it to parse and load our own executable, I simply made sure that there were no glaring issues in the built executable when parsing the various headers. 
+
+## ELF Headers
+I've written ELF parsing code before, but didn't really remember how it worked so I had to relearn everything from Wikipedia: https://en.wikipedia.org/wiki/Executable_and_Linkable_Format. Luckily, we're not trying to parse an arbitrary ELF, just a 64-bit ELF that we built ourselves. The goal is to create a data-structure out of the ELF header information that gives us the data we need to load the ELF in memory. So I skipped some of the ELF header values but ended up parsing the ELF header into the following data structure:
+```rust
+// Constituent parts of the Elf
+#[derive(Debug)]
+pub struct ElfHeader {
+    pub entry: u64,
+    pub phoff: u64,
+    pub shoff: u64,
+    pub phentsize: u16,
+    pub phnum: u16,
+    pub shentsize: u16,
+    pub shnum: u16,
+    pub shrstrndx: u16,
+}
+```
