@@ -56,7 +56,7 @@ So in general, this is how our fuzzing setup should look:
 
 In order to provide a sandboxed environment, we must load an executable Bochs image into our own fuzzer process. So for this, I've chosen to build Bochs as an ELF and then load the ELF into my fuzzer process in memory. Let's dive into how that has been accomplished thus far. 
 
-## Loading an ELF In Memory
+## Loading an ELF in Memory
 So in order to make this portion of loading Bochs in memory in the most simplistic way possible, I've chosen to compile Bochs as a `-static-pie` ELF. Now this means that the built ELF has no expectations about where it is loaded. In its `_start` routine, it actually has all of the logic of the normal OS ELF loader necessary to perform all of its own relocations. How cool is that? But before we get too far ahead of ourselves, the first goal will just be to simply build and load a `-static-pie` test program and make sure we can do that correctly. 
 
 In order to make sure we have everything correctly implemented, we'll make sure that the test program can correctly access any command line arguments we pass and can execute and exit.
