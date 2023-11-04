@@ -25,6 +25,7 @@ And so, in my pursuit of understanding how Nyx works so that I could build a fuz
 This fuzzing architecture seemed to meet several criteria that I personally value when it comes to doing a fuzzer development project on the blog:
 - it is relatively simple in its design,
 - it allows for almost endless introspection utilities to be added,
+- it lends itself well to iterative development cycles,
 - it can scale and be used on my servers I bought for fuzzing (but haven't used yet because I don't have a fuzzer!),
 - it can fuzz the Linux Kernel,
 - it can fuzz userland and kernel components on other OSes and platforms (Windows, MacOS),
