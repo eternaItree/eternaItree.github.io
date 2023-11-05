@@ -148,7 +148,7 @@ So what portions of the this ELF image do we actually care about for our loading
 Keeping in mind that this ELF parsing code doesn't need to be robust, because we are only using it to parse and load our own executable, I simply made sure that there were no glaring issues in the built executable when parsing the various headers. 
 
 ## ELF Headers
-I've written ELF parsing code before, but didn't really remember how it worked so I had to relearn everything from Wikipedia: https://en.wikipedia.org/wiki/Executable_and_Linkable_Format. Luckily, we're not trying to parse an arbitrary ELF, just a 64-bit ELF that we built ourselves. The goal is to create a data-structure out of the ELF header information that gives us the data we need to load the ELF in memory. So I skipped some of the ELF header values but ended up parsing the ELF header into the following data structure:
+I've written ELF parsing code before, but didn't really remember how it worked so I had to relearn everything from Wikipedia: [https://en.wikipedia.org/wiki/Executable_and_Linkable_Format](https://en.wikipedia.org/wiki/Executable_and_Linkable_Format). Luckily, we're not trying to parse an arbitrary ELF, just a 64-bit ELF that we built ourselves. The goal is to create a data-structure out of the ELF header information that gives us the data we need to load the ELF in memory. So I skipped some of the ELF header values but ended up parsing the ELF header into the following data structure:
 ```rust
 // Constituent parts of the Elf
 #[derive(Debug)]
@@ -346,7 +346,7 @@ for segment in load_segments.iter() {
 After that is successful, our ELF image is basically complete. We can just jump to it and start executing! Just kidding, we have to first setup a stack for the new "process" which I learned was a huge pain. 
 
 ## Setting Up a Stack for Bochs
-I spent a lot of time on this and there actually might still be bugs! This was the hardest part I'd say as everything else was pretty much straightforward. To complete this part, I heavily leaned on this resource which describes how x86 32-bit application stacks are fabricated: https://articles.manugarg.com/aboutelfauxiliaryvectors.
+I spent a lot of time on this and there actually might still be bugs! This was the hardest part I'd say as everything else was pretty much straightforward. To complete this part, I heavily leaned on this resource which describes how x86 32-bit application stacks are fabricated: [https://articles.manugarg.com/aboutelfauxiliaryvectors](https://articles.manugarg.com/aboutelfauxiliaryvectors).
 
 Here is an extremely useful diagram describing the 32-bit stack cribbed from the linked resource above:
 ```
@@ -697,9 +697,9 @@ The very next step and blog post will be developing a context-switching routine 
 After that, we have to get very familiar with Bochs and attempt to get a target up and running in vanilla Bochs. Once we do that, we'll try to run that in the Fuzzer.
 
 ## Resources
-- I used this excellent blogpost from Faster Than Lime a lot when learning about how to load ELFs in memory: https://fasterthanli.me/series/making-our-own-executable-packer/part-17.
+- I used this excellent blogpost from Faster Than Lime a lot when learning about how to load ELFs in memory: [https://fasterthanli.me/series/making-our-own-executable-packer/part-17](https://fasterthanli.me/series/making-our-own-executable-packer/part-17).
 - Also shoutout @netspooky for helping me understand the stack layout!
 - Thank you to ChatGPT as well, for being my sounding board (even if you failed to help me with my stack creation bugs)
 
 ## Code
-https://github.com/h0mbre/Lucid
+[https://github.com/h0mbre/Lucid](https://github.com/h0mbre/Lucid)
