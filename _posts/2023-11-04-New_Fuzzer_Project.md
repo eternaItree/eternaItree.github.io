@@ -455,10 +455,197 @@ You can see the towards the end of the data at `0x7fffffffe2d8` we can see the k
 - `AT_ENTRY` which holds the program entry point,
 - `AT_PHDR` which is a pointer to the program header data,
 - `AT_PHNUM` which is the number of program headers,
-- `AT_RANDOM` which is a pointer to 16-bytes of a random seed, which is supposed to be placed by the kernel. This 16-byte value serves as an RNG seed to construct stack canary values. I found out that the program we load actually does need this information because I ended up with a NULL-ptr deref during my initial testing and then placed this auxp pair with a value of `0x4141414141414141` and ended up crashing trying to access that address. For our purposes, we don't really care that the stack canary values are crytographically secure, so I just placed another pointer to the program entry as that is guaranteed to exist. 
+- `AT_RANDOM` which is a pointer to 16-bytes of a random seed, which is supposed to be placed by the kernel. This 16-byte value serves as an RNG seed to construct stack canary values. I found out that the program we load actually does need this information because I ended up with a NULL-ptr deref during my initial testing and then placed this auxp pair with a value of `0x4141414141414141` and ended up crashing trying to access that address. For our purposes, we don't really care that the stack canary values are crytographically secure, so I just placed another pointer to the program entry as that is guaranteed to exist.
+- `AT_NULL` which is used to terminate the auxiliary vector
 
 So with those values all accounted for, we now know all of the data we need to construct the program's stack. 
 
-## Constructing the Stack
-In 
+## Allocating the Stack
+First, we need to allocate memory to hold the Bochs stack since we will need to know the address it's mapped at in order to formulate our pointers. We will know offsets within a vector representing the stack data, but we won't know what the absolute addresses are unless we know ahead of time where this stack is going in memory. Allocating the stack was very straightforward as I just used `mmap` the same way we did with the program segments. Right now I'm using a `1MB` stack which seems to be large enough. 
 
+## Constructing the Stack Data
+In my stack creation logic, I created the stack starting from the bottom and then inserting values on top of the stack.
+
+So the first value we place onto the stack is the "end-marker" from the diagram which is just a `0u64` in Rust.
+
+Next, we need to place all of the strings we need onto the stack, namely our command line arguments. To separate command line arguments meant for the fuzzer from command line arguments meant for Bochs, I created a command line argument `--bochs-args` which is meant to serve as a delineation point between the two argument categories. Every argument after `--bochs-args` is meant for Bochs. I iterate through all of the command line arguments provided and then place them onto the stack. I also log the length of each string argument so that later on, we can calculate their absolute address for when we need to place pointers to the strings in the `argv` vector. As a sidenote, I also made sure that we maintained 8-byte alignment throughout the string pushing routine just so we didn't have to deal with any weird pointer values. This isn't necessary but makes the stack state easier for me to reason about. This is performed with the following logic:
+```rust
+// Create a vector to hold all of our stack data
+let mut stack_data = Vec::new();
+
+// Add the "end-marker" NULL, we're skipping adding any envvar strings for
+// now
+push_u64(&mut stack_data, 0u64);
+
+// Parse the argv entries for Bochs
+let args = parse_bochs_args();
+
+// Store the length of the strings including padding
+let mut arg_lens = Vec::new();
+
+// For each argument, push a string onto the stack and store its offset 
+// location
+for arg in args.iter() {
+    let old_len = stack_data.len();
+    push_string(&mut stack_data, arg.to_string());
+
+    // Calculate arg length and store it
+    let arg_len = stack_data.len() - old_len;
+    arg_lens.push(arg_len);
+}
+```
+
+Pushing strings is performed like this:
+```rust
+// Pushes a NULL terminated string onto the "stack" and pads the string with 
+// NULL bytes until we achieve 8-byte alignment
+fn push_string(stack: &mut Vec<u8>, string: String) {
+    // Convert the string to bytes and append it to the stack
+    let mut bytes = string.as_bytes().to_vec();
+
+    // Add a NULL terminator
+    bytes.push(0x0);
+
+    // We're adding bytes in reverse because we're adding to index 0 always,
+    // we want to pad these strings so that they remain 8-byte aligned so that
+    // the stack is easier to reason about imo
+    if bytes.len() % U64_SIZE > 0 {
+        let pad = U64_SIZE - (bytes.len() % U64_SIZE);
+        for _ in 0..pad { bytes.push(0x0); }
+    }
+
+    for &byte in bytes.iter().rev() {
+        stack.insert(0, byte);
+    }
+}
+```
+
+Then we add some padding and the auxiliary vector members:
+```rust
+// Add some padding
+push_u64(&mut stack_data, 0u64);
+
+// Next we need to set up the auxiliary vectors, terminate the vector with
+// the AT_NULL key which is 0, with a value of 0
+push_u64(&mut stack_data, 0u64);
+push_u64(&mut stack_data, 0u64);
+
+// Add the AT_ENTRY key which is 9, along with the value from the Elf header
+// for the program's entry point. We need to calculate 
+push_u64(&mut stack_data, elf.elf_header.entry + base as u64);
+push_u64(&mut stack_data, 9u64);
+
+// Add the AT_PHDR key which is 3, along with the address of the program
+// headers which is just ELF_HDR_SIZE away from the base
+push_u64(&mut stack_data, (base + ELF_HDR_SIZE) as u64);
+push_u64(&mut stack_data, 3u64);
+
+// Add the AT_PHNUM key which is 5, along with the number of program headers
+push_u64(&mut stack_data, elf.program_headers.len() as u64);
+push_u64(&mut stack_data, 5u64);
+
+// Add AT_RANDOM key which is 25, this is where the start routines will 
+// expect 16 bytes of random data as a seed to generate stack canaries, we
+// can just use the entry again since we don't care about security
+push_u64(&mut stack_data, elf.elf_header.entry + base as u64);
+push_u64(&mut stack_data, 25u64);
+```
+
+Then, since we ignored the environment variables, we just push a `NULL` pointer onto the stack and also the `NULL` pointer terminating the `argv` vector:
+```rust
+// Since we skipped ennvars for now, envp[0] is going to be NULL
+push_u64(&mut stack_data, 0u64);
+
+// argv[n] is a NULL
+push_u64(&mut stack_data, 0u64);
+```
+
+This is where I spent a lot of time debugging. We now have to add the pointers to our arguments. To do this, I first calculated the total length of the stack data now that we know all of the variable parts like the number of arguments and the length of all the strings. We have the stack length as it currently exists which includes the strings, and we know how many pointers and members we have left to add to the stack (number of args and `argc`). Since we know this, we can calculate the absolute addresses of where the string data will be as we push the `argv` pointers onto the stack. We calculate the length as follows:
+```rust
+// At this point, we have all the information we need to calculate the total
+// length of the stack. We're missing the argv pointers and finally argc
+let mut stack_length = stack_data.len();
+
+// Add argv pointers
+stack_length += args.len() * POINTER_SIZE;
+
+// Add argc
+stack_length += std::mem::size_of::<u64>();
+```
+
+Next, we start at the bottom of the stack and create a movable `offset` which will track through the stack stopping at the beginning of each string so that we can calculate its absolute address. The `offset` represents how deep into the stack from the top we are. At first, the `offset` is the largest value it can be because it's at the bottom of the stack (higher-memory address). We subtract from it in order to point us towards the beginning of each `argv` string we pushed onto the stack. So the bottom of the stack looks something like this:
+```
+NULL
+string_1
+string_2
+end-marker <--- offset
+```
+
+So armed with the arguments and their lengths that we recorded, we can adjust the `offset` each time we iterate through the argument lengths to point to the beginning of the strings. There is one gotcha though, on the first iteration, we have to account for the end-marker and its 8-bytes. So this is how the logic goes:
+```rust
+// Right now our offset is at the bottom of the stack, for the first
+// argument calculation, we have to accomdate the "end-marker" that we added
+// to the stack at the beginning. So we need to move the offset up the size
+// of the end-marker and then the size of the argument itself. After that,
+// we only have to accomodate the argument lengths when moving the offset
+for (idx, arg_len) in arg_lens.iter().enumerate() {
+    // First argument, account for end-marker
+    if idx == 0 {
+        curr_offset -= arg_len + U64_SIZE;
+    }
+    
+    // Not the first argument, just account for the string length
+    else {
+        curr_offset -= arg_len;
+    }
+    
+    // Calculate the absolute address
+    let absolute_addr = (stack_addr + curr_offset) as u64;
+
+    // Push the absolute address onto the stack
+    push_u64(&mut stack_data, absolute_addr);
+}
+```
+
+It's pretty cool! And it seems to work? Finally we cap the stack off with `argc` and we are done populating all of the stack data in a vector. Next, we'll want to actually copy the data onto the stack allocation which is straightforward so no code snippet there. 
+
+The last piece of information I think worth noting here is that I created a constant called `STACK_DATA_MAX` and the length of the stack data cannot be more than that tunable value. We use this value to set up `RSP` when we jump to the program in memory and start executing. `RSP` is set so that it is at the absolute lowest address possible, which is the stack allocation size - `STACK_DATA_MAX`. This way, when the stack grows, we have left the maximum amount of slack space possible for the stack to grow into since the stack grows down in memory. 
+
+## Executing the Loaded Program
+Everything at this point should be setup perfectly in memory and all we have to do is jump to the target code and start executing. For now, I haven't fleshed out a context switching routine or anything we're literally just going to jump to the program and execute it and hope everything goes well. The code I used to achieve this is very simple:
+```rust
+pub fn start_bochs(bochs: Bochs) {
+    // Set RAX to our jump destination which is the program entry, clear RDX,
+    // and set RSP to the correct value
+    unsafe {
+        asm!(
+            "mov rax, {0}",
+            "mov rsp, {1}",
+            "xor rdx, rdx",
+            "jmp rax",
+            in(reg) bochs.entry,
+            in(reg) bochs.rsp,
+        );
+    }
+}
+```
+
+The reason we clear `RDX` is because if the `_start` routine sees a non-zero value in `RDX`, it will interpret that to mean that we are attempting to register a hook located at the address in `RDX` to be invoked when the program exits, we don't have one we want to run so for now we `NULL` it out. The other register values don't really matter. We move the program entry point into `RAX` and use it as a long jump target and we supply our handcrated `RSP` so that the program has a stack to use to do its relocations and run properly. 
+
+```console
+dude@lol:~/lucid/target/release$ ./lucid --bochs-args -AAAAA -BBBBBBBBBB
+[17:43:19] lucid> Loading Bochs...
+[17:43:19] lucid> Bochs loaded { Entry: 0x19F50, RSP: 0x7F513F11C000 }
+Argument count: 3
+Args:
+   -./bochs
+   --AAAAA
+   --BBBBBBBBBB
+Test alive!
+Test alive!
+Test alive!
+Test alive!
+Test alive!
+Test alive!
+dude@lol:~/lucid/target/release$ 
+```
