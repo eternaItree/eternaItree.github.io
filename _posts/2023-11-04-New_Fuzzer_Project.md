@@ -382,4 +382,83 @@ position            content                     size (bytes) + comment
 
 When we pass arguments to a process on the command line like `ls / -laht`, the Linux OS has to load the `ls` ELF into memory and create its environment. In this example, we passed a couple argument values to the process as well `/` and `-laht`. The way that the OS passes these arguments to the process is on the stack via the argument vector or `argv` for short, which is an array of string pointers. The number of arguments is represented by the argument count or `argc`. The first member of `argv` is usually the name of the executable that was passed on the command line, so in our example it would be `ls`. As you can see the first thing on the stack, the top of the stack, which is at the lower end of the address range of the stack, is `argc`, followed by all the pointers to string data representing the program arguments. It is also important to note that the array is `NULL` terminated at the end. 
 
-After that, we have a similar data structure with the `envp` array, which is an array of pointers to string data representing environment variables. You can retrieve this data yourself by running a program under GDB and using the command `show environment`, the environment variables are usually in the form "KEY=VALUE", for instance on my machine the key-value pair for the language environment variable is `"LANG=en_US.UTF-8"`. For our purposes, we can ignore the environment variables 
+After that, we have a similar data structure with the `envp` array, which is an array of pointers to string data representing environment variables. You can retrieve this data yourself by running a program under GDB and using the command `show environment`, the environment variables are usually in the form "KEY=VALUE", for instance on my machine the key-value pair for the language environment variable is `"LANG=en_US.UTF-8"`. For our purposes, we can ignore the environment variables. This vector is also `NULL` terminated.
+
+Next, is the auxiliary vector, which is extremely important to us. This information details several aspects of the program. These auxiliary entries in the vector are 16-bytes a piece. They comprise a key and a value just like our environment variable entries, but these are basically u64 values. For the `test` program, we can actually dump the auxiliary information by using `info aux` under GDB.
+```console
+gef➤  info aux
+33   AT_SYSINFO_EHDR      System-supplied DSO's ELF header 0x7ffff7f2e000
+51   ???                                                 0xe30
+16   AT_HWCAP             Machine-dependent CPU capability hints 0x1f8bfbff
+6    AT_PAGESZ            System page size               4096
+17   AT_CLKTCK            Frequency of times()           100
+3    AT_PHDR              Program headers for program    0x7ffff7f30040
+4    AT_PHENT             Size of program header entry   56
+5    AT_PHNUM             Number of program headers      12
+7    AT_BASE              Base address of interpreter    0x0
+8    AT_FLAGS             Flags                          0x0
+9    AT_ENTRY             Entry point of program         0x7ffff7f39f50
+11   AT_UID               Real user ID                   1000
+12   AT_EUID              Effective user ID              1000
+13   AT_GID               Real group ID                  1000
+14   AT_EGID              Effective group ID             1000
+23   AT_SECURE            Boolean, was exec setuid-like? 0
+25   AT_RANDOM            Address of 16 random bytes     0x7fffffffe3b9
+26   AT_HWCAP2            Extension of AT_HWCAP          0x2
+31   AT_EXECFN            File name of executable        0x7fffffffefe2 "/home/dude/lucid/test"
+15   AT_PLATFORM          String identifying platform    0x7fffffffe3c9 "x86_64"
+0    AT_NULL              End of vector                  0x0
+```
+
+The keys are on the left the values are on the right. For instance, on the stack we can expect the value 0x5 for `AT_PHNUM`, which describes the number of Program Headers, to be accompanied by `12` as the value. We can dump the stack and see this in action as well. 
+```console
+gef➤  x/400gx $rsp
+0x7fffffffe0b0:	0x0000000000000001	0x00007fffffffe3d6
+0x7fffffffe0c0:	0x0000000000000000	0x00007fffffffe3ec
+0x7fffffffe0d0:	0x00007fffffffe3fc	0x00007fffffffe44e
+0x7fffffffe0e0:	0x00007fffffffe461	0x00007fffffffe475
+0x7fffffffe0f0:	0x00007fffffffe4a2	0x00007fffffffe4b9
+0x7fffffffe100:	0x00007fffffffe4e5	0x00007fffffffe505
+0x7fffffffe110:	0x00007fffffffe52e	0x00007fffffffe542
+0x7fffffffe120:	0x00007fffffffe559	0x00007fffffffe56c
+0x7fffffffe130:	0x00007fffffffe588	0x00007fffffffe59d
+0x7fffffffe140:	0x00007fffffffe5b8	0x00007fffffffe5c5
+0x7fffffffe150:	0x00007fffffffe5da	0x00007fffffffe60e
+0x7fffffffe160:	0x00007fffffffe61d	0x00007fffffffe646
+0x7fffffffe170:	0x00007fffffffe667	0x00007fffffffe674
+0x7fffffffe180:	0x00007fffffffe67d	0x00007fffffffe68d
+0x7fffffffe190:	0x00007fffffffe69b	0x00007fffffffe6ad
+0x7fffffffe1a0:	0x00007fffffffe6be	0x00007fffffffeca0
+0x7fffffffe1b0:	0x00007fffffffecc1	0x00007fffffffeccd
+0x7fffffffe1c0:	0x00007fffffffecde	0x00007fffffffed34
+0x7fffffffe1d0:	0x00007fffffffed63	0x00007fffffffed73
+0x7fffffffe1e0:	0x00007fffffffed8b	0x00007fffffffedad
+0x7fffffffe1f0:	0x00007fffffffedc4	0x00007fffffffedd8
+0x7fffffffe200:	0x00007fffffffedf8	0x00007fffffffee02
+0x7fffffffe210:	0x00007fffffffee21	0x00007fffffffee2c
+0x7fffffffe220:	0x00007fffffffee34	0x00007fffffffee46
+0x7fffffffe230:	0x00007fffffffee65	0x00007fffffffee7c
+0x7fffffffe240:	0x00007fffffffeed1	0x00007fffffffef7b
+0x7fffffffe250:	0x00007fffffffef8d	0x00007fffffffefc3
+0x7fffffffe260:	0x0000000000000000	0x0000000000000021
+0x7fffffffe270:	0x00007ffff7f2e000	0x0000000000000033
+0x7fffffffe280:	0x0000000000000e30	0x0000000000000010
+0x7fffffffe290:	0x000000001f8bfbff	0x0000000000000006
+0x7fffffffe2a0:	0x0000000000001000	0x0000000000000011
+0x7fffffffe2b0:	0x0000000000000064	0x0000000000000003
+0x7fffffffe2c0:	0x00007ffff7f30040	0x0000000000000004
+0x7fffffffe2d0:	0x0000000000000038	0x0000000000000005
+0x7fffffffe2e0:	0x000000000000000c	0x0000000000000007
+```
+
+You can see the towards the end of the data at `0x7fffffffe2d8` we can see the key `0x5`, and at `0x7fffffffe2e0` we can see the value `0xc` which is 12 in hex. We need some of these in order to load our ELF properly as the ELF `_start` routine requires some of them in order to set the environment up properly. The ones I included on my stack were the following, they might not all be necessary: 
+- `AT_ENTRY` which holds the program entry point,
+- `AT_PHDR` which is a pointer to the program header data,
+- `AT_PHNUM` which is the number of program headers,
+- `AT_RANDOM` which is a pointer to 16-bytes of a random seed, which is supposed to be placed by the kernel. This 16-byte value serves as an RNG seed to construct stack canary values. I found out that the program we load actually does need this information because I ended up with a NULL-ptr deref during my initial testing and then placed this auxp pair with a value of `0x4141414141414141` and ended up crashing trying to access that address. For our purposes, we don't really care that the stack canary values are crytographically secure, so I just placed another pointer to the program entry as that is guaranteed to exist. 
+
+So with those values all accounted for, we now know all of the data we need to construct the program's stack. 
+
+## Constructing the Stack
+In 
+
