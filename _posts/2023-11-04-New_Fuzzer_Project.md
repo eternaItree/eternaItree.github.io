@@ -700,3 +700,6 @@ After that, we have to get very familiar with Bochs and attempt to get a target 
 - I used this excellent blogpost from Faster Than Lime a lot when learning about how to load ELFs in memory: https://fasterthanli.me/series/making-our-own-executable-packer/part-17.
 - Also shoutout @netspooky for helping me understand the stack layout!
 - Thank you to ChatGPT as well, for being my sounding board (even if you failed to help me with my stack creation bugs)
+
+## Code
+I will have a link to the repository soon posted here
