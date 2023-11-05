@@ -702,4 +702,4 @@ After that, we have to get very familiar with Bochs and attempt to get a target 
 - Thank you to ChatGPT as well, for being my sounding board (even if you failed to help me with my stack creation bugs)
 
 ## Code
-[](https://github.com/h0mbre/Lucid)
+https://github.com/h0mbre/Lucid
