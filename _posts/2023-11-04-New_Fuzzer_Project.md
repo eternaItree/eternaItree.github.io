@@ -649,3 +649,54 @@ Test alive!
 Test alive!
 dude@lol:~/lucid/target/release$ 
 ```
+
+The program runs, parses our command line args, and exits all without crashing! So it looks like everything is good to go. This would normally be a good stopping place, but I was morbidly curious...
+
+## Will Bochs Run? 
+We have to see right? First we have to compile Bochs as a `-static-pie` ELF which was a headache in itself, but I was able to figure it out. 
+
+```console
+ude@lol:~/lucid/target/release$ ./lucid --bochs-args -AAAAA -BBBBBBBBBB
+[12:30:40] lucid> Loading Bochs...
+[12:30:40] lucid> Bochs loaded { Entry: 0xA3DB0, RSP: 0x7FEB0F565000 }
+========================================================================
+                        Bochs x86 Emulator 2.7
+              Built from SVN snapshot on August  1, 2021
+                Timestamp: Sun Aug  1 10:07:00 CEST 2021
+========================================================================
+Usage: bochs [flags] [bochsrc options]
+
+  -n               no configuration file
+  -f configfile    specify configuration file
+  -q               quick start (skip configuration interface)
+  -benchmark N     run Bochs in benchmark mode for N millions of emulated ticks
+  -dumpstats N     dump Bochs stats every N millions of emulated ticks
+  -r path          restore the Bochs state from path
+  -log filename    specify Bochs log file name
+  -unlock          unlock Bochs images leftover from previous session
+  --help           display this help and exit
+  --help features  display available features / devices and exit
+  --help cpu       display supported CPU models and exit
+
+For information on Bochs configuration file arguments, see the
+bochsrc section in the user documentation or the man page of bochsrc.
+00000000000p[      ] >>PANIC<< command line arg '-AAAAA' was not understood
+00000000000e[SIM   ] notify called, but no bxevent_callback function is registered
+========================================================================
+Bochs is exiting with the following message:
+[      ] command line arg '-AAAAA' was not understood
+========================================================================
+00000000000i[SIM   ] quit_sim called with exit code 1
+```
+
+Bochs runs! It couldn't make sense of our non-sense command line arguments, but we loaded it and ran it successfully. 
+
+## Next Steps
+The very next step and blog post will be developing a context-switching routine that we will use to transition between Fuzzer execution and Bochs execution. This will involve saving our state each time and function basically the same way a normal user-to-kernel context switch functions. 
+
+After that, we have to get very familiar with Bochs and attempt to get a target up and running in vanilla Bochs. Once we do that, we'll try to run that in the Fuzzer.
+
+## Resources
+- I used this excellent blogpost from Faster Than Lime a lot when learning about how to load ELFs in memory: https://fasterthanli.me/series/making-our-own-executable-packer/part-17.
+- Also shoutout @netspooky for helping me understand the stack layout!
+- Thank you to ChatGPT as well, for being my sounding board (even if you failed to help me with my stack creation bugs)
