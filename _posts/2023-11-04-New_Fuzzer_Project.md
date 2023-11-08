@@ -630,7 +630,7 @@ pub fn start_bochs(bochs: Bochs) {
 }
 ```
 
-The reason we clear `RDX` is because if the `_start` routine sees a non-zero value in `RDX`, it will interpret that to mean that we are attempting to register a hook located at the address in `RDX` to be invoked when the program exits, we don't have one we want to run so for now we `NULL` it out. The other register values don't really matter. We move the program entry point into `RAX` and use it as a long jump target and we supply our handcrated `RSP` so that the program has a stack to use to do its relocations and run properly. 
+The reason we clear `RDX` is because if the `_start` routine sees a non-zero value in `RDX`, it will interpret that to mean that we are attempting to register a hook located at the address in `RDX` to be invoked when the program exits, we don't have one we want to run so for now we `NULL` it out. The other register values don't really matter. We move the program entry point into `RAX` and use it as a long jump target and we supply our handcrafted `RSP` so that the program has a stack to use to do its relocations and run properly. 
 
 ```console
 dude@lol:~/lucid/target/release$ ./lucid --bochs-args -AAAAA -BBBBBBBBBB
