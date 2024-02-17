@@ -174,4 +174,88 @@ hidden void _dlstart_c(size_t *sp, size_t *dynv)
 When this function is called, `r15` remains untouched by the earliest Musl logic. So we use inline assembly to extract the value into a variable called `r15` and check it for data. If it has data, we set the global context variable to the address in `r15`; otherwise we explicitly set it to NULL and run as normal. Now with a global set, we can do runtime checks for our environment and optionally call into the real kernel or into Lucid. 
 
 ## Lobotomizing Musl Syscalls
-Now with our global set, it's time to edit the functions responsible for making syscalls. After 
+Now with our global set, it's time to edit the functions responsible for making syscalls. Musl is very well organized so finding the syscall invoking logic was not too difficult. For our target architecture, which is x86_64, those syscall invoking functions are in `arch/x86_64/syscall_arch.h`. They are organized by how many arguments the syscall takes:
+```c
+static __inline long __syscall0(long n)
+{
+	unsigned long ret;
+	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n) : "rcx", "r11", "memory");
+	return ret;
+}
+
+static __inline long __syscall1(long n, long a1)
+{
+	unsigned long ret;
+	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1) : "rcx", "r11", "memory");
+	return ret;
+}
+
+static __inline long __syscall2(long n, long a1, long a2)
+{
+	unsigned long ret;
+	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2)
+						  : "rcx", "r11", "memory");
+	return ret;
+}
+
+static __inline long __syscall3(long n, long a1, long a2, long a3)
+{
+	unsigned long ret;
+	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2),
+						  "d"(a3) : "rcx", "r11", "memory");
+	return ret;
+}
+
+static __inline long __syscall4(long n, long a1, long a2, long a3, long a4)
+{
+	unsigned long ret;
+	register long r10 __asm__("r10") = a4;
+	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2),
+						  "d"(a3), "r"(r10): "rcx", "r11", "memory");
+	return ret;
+}
+
+static __inline long __syscall5(long n, long a1, long a2, long a3, long a4, long a5)
+{
+	unsigned long ret;
+	register long r10 __asm__("r10") = a4;
+	register long r8 __asm__("r8") = a5;
+	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2),
+						  "d"(a3), "r"(r10), "r"(r8) : "rcx", "r11", "memory");
+	return ret;
+}
+
+static __inline long __syscall6(long n, long a1, long a2, long a3, long a4, long a5, long a6)
+{
+	unsigned long ret;
+	register long r10 __asm__("r10") = a4;
+	register long r8 __asm__("r8") = a5;
+	register long r9 __asm__("r9") = a6;
+	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2),
+						  "d"(a3), "r"(r10), "r"(r8), "r"(r9) : "rcx", "r11", "memory");
+	return ret;
+}
+```
+
+For syscalls, there is a well defined calling convention. Syscalls take a "syscall number" which determines what syscall you want in `eax`, then the next n parameters are passed in via the registers in order: `rdi`, `rsi`, `rdx`, `r10`, `r8`, and `r9`. 
+
+This is pretty intuitive but the syntax is a bit mystifying, like for example on those `__asm__ __volatile__ ("syscall"` lines, it's kind of hard to see what it's doing. Let's take the most convoluted function, `__syscall6` and break down all the syntax. We can think of the assembly syntax as a format string like for printing, but this is for emitting code instead:
+
+- `unsigned long ret` is where we will store the result of the syscall to indicate whether or not it was a success. In the raw assembly, we can see that there is a `:` and then `"=a(ret)"`, this first set of parameters after the initial colon is to indicate *output* parameters. We are saying please store the result in `eax` (symbolized in the syntax as `a`) into the variable `ret`.
+- The next series of params after the next colon are *input* parameters. `"a"(n)` is saying, place the function argument `n`, which is the syscall number, into `eax` which is symbolized again as `a`. Next is store `a1` in `rdi`, which is symbolized as `D`, and so forth
+- Arguments 4-6 are placed in registers above, for instance the syntax `register long r10 __asm__("r10") = a4;` is a strong compiler hint to store `a4` into `r10`. And then later we see `"r"(r10)` says input the variable `r10` into a general purpose register (which is already satisfied).
+- The last set of colon-separated values are known as "clobbers". These tell the compiler what our syscall is expected to corrupt. So the syscall calling convention specifies that `rcx`, `r11`, and memory may be overwritten by the kernel.
+
+With the syntax explained, we see what is taking place. The job of these functions is to translate the function call into a syscall. The calling convention for functions, known as the System V ABI, is different from that of a syscall, the register utilization differs. So when we call `__syscall6` and pass its arguments, each argument is stored in the following register:
+
+- `n` → `rax`
+- `a1` → `rdi`
+- `a2` → `rsi`
+- `a3` → `rdx`
+- `a4` → `rcx`
+- `a5` → `r8`
+- `a6` → `r9`
+
+So the compiler will take those function args from the System V ABI and translate them into the syscall via the assembly that we explained above. So now these are the functions we need to edit so that we don't emit that `syscall` instruction and instead call into Lucid.
+
+## Conditionally Calling Into Lucid
