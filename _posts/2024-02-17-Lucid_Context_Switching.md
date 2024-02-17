@@ -100,3 +100,9 @@ typedef struct lucid_ctx {
 lucid_ctx_t *g_lucid_ctx;
 ```
 
+So in Lucid's main function right now we do the following:
+- Load Bochs
+- Create an execution context
+- Jump to Bochs' entry point and start executing
+
+
