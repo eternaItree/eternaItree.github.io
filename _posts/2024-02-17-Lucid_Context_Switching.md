@@ -42,6 +42,61 @@ fn syscall()
 ```
 
 ## Musl
-[Musl(https://musl.libc.org/) is a C library that is meant to be "lightweight." This gives us some simplicity to work with vs. something like Glibc which is a monstrosity an affront to God. Importantly, Musl is reputationally great for static linking, which is what we need when we build our static PIE Bochs. So the idea here is that we can manually alter Musl code to change how syscall-invoking wrapper functions work so that we can hijack execution in a way that context-switches into Lucid rather than the kernel. 
+[Musl](https://musl.libc.org/) is a C library that is meant to be "lightweight." This gives us some simplicity to work with vs. something like Glibc which is a monstrosity an affront to God. Importantly, Musl is reputationally great for static linking, which is what we need when we build our static PIE Bochs. So the idea here is that we can manually alter Musl code to change how syscall-invoking wrapper functions work so that we can hijack execution in a way that context-switches into Lucid rather than the kernel. 
 
 In this post we'll be working with Musl 1.2.4 which is the latest version as of today. 
+
+## Baby Steps
+Instead of jumping straight into Bochs, we'll be using a test program for the purposes of developing our first context-switching routines. This is just easier. The test program is this:
+```c
+#include <stdio.h>
+#include <unistd.h>
+#include <lucid.h>
+
+int main(int argc, char *argv[]) {
+    printf("Argument count: %d\n", argc);
+    printf("Args:\n");
+    for (int i = 0; i < argc; i++) {
+        printf("   -%s\n", argv[i]);
+    }
+
+    size_t iters = 0;
+    while (1) {
+        printf("Test alive!\n");
+        sleep(1);
+        iters++;
+
+        if (iters == 5) { break; }
+    }
+
+    printf("g_lucid_ctx: %p\n", g_lucid_ctx);
+}
+```
+
+The program will just tell us it's argument count, each argument, live for ~5 seconds, and then print the memory address of a Lucid execution context data structure. This data structure will be allocated and initialized by Lucid if the program is running under Lucid, and it will be NULL otherwise. So how do we accomplish this? 
+
+## Execution Context Tracking
+Our problem is that we need a globally accessible way for the program we load (eventually Bochs) to tell whether or not its running under Lucid or running as normal. We also have to provide many data structures and function addresses to Bochs so we need a vehicle do that. 
+
+What I've done is I've just created my own header file and placed it in Musl called `lucid.h`. This file defines all of the Lucid-specific data structures we need Bochs to have access to when it's compiled against Musl. So in the header file right now we've defined a `lucid_ctx` data structure, and we've also created a global instance of one called `g_lucid_ctx`:
+```c
+// An execution context definition that we use to switch contexts between the
+// fuzzer and Bochs. This should contain all of the information we need to track
+// all of the mutable state between snapshots that we need such as file data.
+// This has to be consistent with LucidContext in context.rs
+typedef struct lucid_ctx {
+    // This must always be the first member of this struct
+    size_t exit_handler;
+    int save_inst;
+    size_t save_size;
+    size_t lucid_save_area;
+    size_t bochs_save_area;
+    struct register_bank register_bank;
+    size_t magic;
+} lucid_ctx_t;
+
+// Pointer to the global execution context, if running inside Lucid, this will
+// point to the a struct lucid_ctx_t inside the Fuzzer 
+lucid_ctx_t *g_lucid_ctx;
+```
+
