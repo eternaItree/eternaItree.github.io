@@ -323,3 +323,35 @@ __asm__ __volatile__ (
 So now we're calling the exit handler instead of syscalling into the kernel, and all of the registers are setup *as if* we're syscalling. We've also got our calling convention registers set up. Let's see what happens when we land on the exit handler, a function that is implemented in Rust inside Lucid. We are jumping from Bochs code directly to Lucid code!
 
 ## Implementing a Context Switch
+The first thing we need to do is create a function body for the exit handler. In Rust, we can make the function visible to Bochs (via our edited Musl) by declaring the function as an extern C function and giving it a label in inline assembly as such:
+```rust
+extern "C" { fn exit_handler(); }
+global_asm!(
+    ".global exit_handler",
+    "exit_handler:",
+```
+
+So this function is what will be jumped to by Bochs when it tries to syscall under Lucid. The first thing we need to consider is that we need to keep track of Bochs' state the way the kernel would upon entry to the context switching routine. The first thing we'll want to save off is the general purpose registers. By doing this, we can preserve the state of the registers, but also unlock them for our own use. Since we save them first, we're then free to use them. Remember that our calling convention uses `r13` to store the base address of the execution context register bank:
+```rust
+#[repr(C)]
+#[derive(Default, Clone)]
+pub struct RegisterBank {
+    pub rax:    usize,
+    rbx:        usize,
+    rcx:        usize,
+    pub rdx:    usize,
+    pub rsi:    usize,
+    pub rdi:    usize,
+    rbp:        usize,
+    rsp:        usize,
+    pub r8:     usize,
+    pub r9:     usize,
+    pub r10:    usize,
+    r11:        usize,
+    r12:        usize,
+    r13:        usize,
+    r14:        usize,
+    r15:        usize,
+}
+```
+
