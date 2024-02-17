@@ -29,5 +29,7 @@ Context-switching can be thought of as switching from executing one process to a
 4. execute our Lucid logic in place of the kernel, think of Lucid as Bochs' kernel
 5. return gracefully to Bochs by restoring its state
 
+## C Library
+Normally programmers don't have to worry about making syscalls directly. They instead use functions that are defined and implemented in a C library instead, and its these functions that actually make the syscalls. You can think of these functions as wrappers around a syscall. For instance if you use the C library function for `open`, you're not directly making a syscall, you're calling into the library's `open` function and that function is the one emitting a `syscall` instruction that actually peforms the context switch into the kernel. Doing things this way takes a lot of the portability work off of the programmer's shoulders because the guts of the library functions perform all of the conditional checks for environmental variables and execute accordingly. Programmers just call the `open` function and don't have to worry about things like syscall numbers, error handling, etc as those things are kept abstracted and uniform in the code exported to the programmer. 
 
-
+This provides a nice chokepoint for our purposes, as the programmers of Bochs also use C library functions instead of invoking syscalls directly. This means, we can know ahead of t
