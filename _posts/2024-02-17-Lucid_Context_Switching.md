@@ -19,3 +19,15 @@ If you haven't heard, we're developing a fuzzer on the blog these days. I don't 
 This fuzzer was conceived of and implemented originally by [Brandon Falk](https://twitter.com/gamozolabs).
 
 ## Syscalls
+[Syscalls](https://wiki.osdev.org/System_Calls) are a way for userland to voluntarily context switch to kernel-mode in order to utilize some kernel provided utility or function. Context switching simply means changing the context in which code is executing. When you're adding integers, reading/writing memory, your process is executing in user-mode within your processes' virtual address space. But if you want to open a socket or file, you need the kernel's help. To do this, you make a syscall which will tell the processor to switch execution modes from user-mode to kernel-mode. In order to leave user-mode go to kernel-mode and then return to user-mode, a lot of care must be taken to accurately save the execution state at every step. Once you try to execute a syscall, the first thing the OS has to do is save your current execution state before it starts executing your requested kernel code, that way once the kernel is done with your request, it can return gracefully to executing your user-mode process.
+
+Context-switching can be thought of as switching from executing one process to another. In our case, we're switching from Bochs execution to Lucid execution. Bochs is doing it's thing, reading/writing memory, doing arithmetic etc, but when it needs the kernel's help it attempts to make a syscall. When this occurs we need to:
+
+1. recognize that Bochs is trying syscall, this isn't always easy to do weirdly
+2. intercept execution and redirect to the appropriate code path
+3. save Bochs' execution state
+4. execute our Lucid logic in place of the kernel, think of Lucid as Bochs' kernel
+5. return gracefully to Bochs by restoring its state
+
+
+
