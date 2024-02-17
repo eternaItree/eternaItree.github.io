@@ -100,9 +100,78 @@ typedef struct lucid_ctx {
 lucid_ctx_t *g_lucid_ctx;
 ```
 
+## Program Start Under Lucid
 So in Lucid's main function right now we do the following:
 - Load Bochs
 - Create an execution context
 - Jump to Bochs' entry point and start executing
 
+When we jump to Bochs' entry point, one of the earliest functions called is a function in Musl called `_dlstart_c` located in the source file `dlstart.c`. Right now, we create that global execution context in Lucid on the heap, and then we pass that address in arbitrarily chosen `r15`. This whole function will have to change eventually because we'll want to context switch from Lucid to Bochs to perform this in the future, but for now this is all we do:
+```rust
+pub fn start_bochs(bochs: Bochs, context: Box<LucidContext>) {
+    // rdx: we have to clear this register as the ABI specifies that exit
+    // hooks are set when rdx is non-null at program start
+    //
+    // rax: arbitrarily used as a jump target to the program entry
+    //
+    // rsp: Rust does not allow you to use 'rsp' explicitly with in(), so we
+    // have to manually set it with a `mov`
+    //
+    // r15: holds a pointer to the execution context, if this value is non-
+    // null, then Bochs learns at start time that it is running under Lucid
+    //
+    // We don't really care about execution order as long as we specify clobbers
+    // with out/lateout, that way the compiler doesn't allocate a register we 
+    // then immediately clobber
+    unsafe {
+        asm!(
+            "xor rdx, rdx",
+            "mov rsp, {0}",
+            "mov r15, {1}",
+            "jmp rax",
+            in(reg) bochs.rsp,
+            in(reg) Box::into_raw(context),
+            in("rax") bochs.entry,
+            lateout("rax") _,   // Clobber (inout so no conflict with in)
+            out("rdx") _,       // Clobber
+            out("r15") _,       // Clobber
+        );
+    }
+}
+```
 
+So when we jump to Bochs entry point having come from Lucid, `r15` should hold the address of the execution context. In `_dlstart_c`, we can check `r15` and act accordingly. Here are those additions I made to Musl's start routine:
+```c
+hidden void _dlstart_c(size_t *sp, size_t *dynv)
+{
+	// The start routine is handled in inline assembly in arch/x86_64/crt_arch.h
+	// so we can just do this here. That function logic clobbers only a few
+	// registers, so we can have the Lucid loader pass the address of the 
+	// Lucid context in r15, this is obviously not the cleanest solution but
+	// it works for our purposes
+	size_t r15;
+	__asm__ __volatile__(
+		"mov %%r15, %0" : "=r"(r15)
+	);
+
+	// If r15 was not 0, set the global context address for the g_lucid_ctx that
+	// is in the Rust fuzzer
+	if (r15 != 0) {
+		g_lucid_ctx = (lucid_ctx_t *)r15;
+
+		// We have to make sure this is true, we rely on this
+		if ((void *)g_lucid_ctx != (void *)&g_lucid_ctx->exit_handler) {
+			__asm__ __volatile__("int3");
+		}
+	}
+
+	// We didn't get a g_lucid_ctx, so we can just run normally
+	else {
+		g_lucid_ctx = (lucid_ctx_t *)0;
+	}
+```
+
+When this function is called, `r15` remains untouched by the earliest Musl logic. So we use inline assembly to extract the value into a variable called `r15` and check it for data. If it has data, we set the global context variable to the address in `r15`; otherwise we explicitly set it to NULL and run as normal. Now with a global set, we can do runtime checks for our environment and optionally call into the real kernel or into Lucid. 
+
+## Lobotomizing Musl Syscalls
+Now with our global set, it's time to edit the functions responsible for making syscalls. After 
