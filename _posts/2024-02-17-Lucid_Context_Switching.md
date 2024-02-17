@@ -319,3 +319,7 @@ __asm__ __volatile__ (
 	
 	return ret;
 ```
+
+So now we're calling the exit handler instead of syscalling into the kernel, and all of the registers are setup *as if* we're syscalling. We've also got our calling convention registers set up. Let's see what happens when we land on the exit handler, a function that is implemented in Rust inside Lucid. We are jumping from Bochs code directly to Lucid code!
+
+## Implementing a Context Switch
