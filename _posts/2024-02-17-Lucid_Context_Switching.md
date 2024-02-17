@@ -265,7 +265,7 @@ So we need a way in these function bodies to call into Lucid instead of emit `sy
 - `r13`: is the base address of the register bank structure of the Lucid execution context, we need this memory section to store our register values to save our state when we context switch
 - `r12`: stores the address of the "exit handler" which is the function to call to context switch
 
-This will no doubt change some as we add more features/functionality. 
+This will no doubt change some as we add more features/functionality. I should also note that it is the functions responibility to preserve these values according to the ABI, so the function caller expects that these won't change during a function call, well we are changing them. That's ok because in the function where we use them, we are marking them as clobbers, remember? So the compiler is aware that they change, what the compiler is going to do now is before it executes any code, it's going to push those registers onto the stack to save them, and then before exiting, pop them back into the registers so that the caller gets back the expected values. So we're free to use them. 
 
 So to alter the functions, I changed the function logic to first check if we have a global Lucid execution context, if we do not, then execute the normal Musl function, you can see that here as I've moved the normal function logic out to a separate function called `__syscall6_original`:
 ```c
@@ -355,3 +355,132 @@ pub struct RegisterBank {
 }
 ```
 
+We can save the register values then by doing this:
+```rust
+// Save the GPRS to memory
+"mov [r13 + 0x0], rax",
+"mov [r13 + 0x8], rbx",
+"mov [r13 + 0x10], rcx",
+"mov [r13 + 0x18], rdx",
+"mov [r13 + 0x20], rsi",
+"mov [r13 + 0x28], rdi",
+"mov [r13 + 0x30], rbp",
+"mov [r13 + 0x38], rsp",
+"mov [r13 + 0x40], r8",
+"mov [r13 + 0x48], r9",
+"mov [r13 + 0x50], r10",
+"mov [r13 + 0x58], r11",
+"mov [r13 + 0x60], r12",
+"mov [r13 + 0x68], r13",
+"mov [r13 + 0x70], r14",
+"mov [r13 + 0x78], r15",
+```
+
+This will save the register values to memory in the memory bank for preservation. Next, we'll want to preserve the CPU's flags, luckily there is a single instruction for this purpose which pushes the flag values to the stack called `pushfq`.
+
+We're using a pure assembly stub right now but we'd like to start using Rust at some point, that point is now. We have saved all the state we can for now, and it's time to call into a real Rust function that will make programming and implementation easier. To call into a function though, we need to set up the register values to adhere to the function calling ABI remember. Two pieces of data that we want to be accessible are the execution context and the reason why we exited. Those are in `r15` and `r14` respectively remember. So we can simply place those into the registers used for passing function arguments and call into a Rust function called `lucid_handler` now. 
+```rust
+// Bochs saves its GPRs before calling into us, so all we need to do is 
+// save the flags
+"pushfq",
+
+// Set up the function arguments for lucid_handler according to ABI
+"mov rdi, r15", // Put the pointer to the context into RDI
+"mov rsi, r14", // Put the exit reason into RSI
+
+// At this point, we've been called into by Bochs, this should mean that 
+// at the beginning of our exit_handler, rsp was only 8-byte aligned and
+// thus, by ABI, we cannot legally call into a Rust function since to do so
+// requires rsp to be 16-byte aligned. Luckily, `pushfq` just 16-byte
+// aligned the stack for us and so we are free to `call`
+"call lucid_handler",
+```
+
+So now, we are free to execute real Rust code! Here is `lucid_handler` as of now:
+```rust
+// This is where the actual logic is for handling the Bochs exit, we have to 
+// use no_mangle here so that we can call it from the assembly blob. We need
+// to see why we've exited and dispatch to the appropriate function
+#[no_mangle]
+fn lucid_handler(context: *mut LucidContext, exit_reason: i32) {
+    // We have to make sure this bad boy isn't NULL 
+    if context.is_null() {
+        println!("LucidContext pointer was NULL");
+        fatal_exit();
+    }
+
+    // Ensure that we have our magic value intact, if this is wrong, then we 
+    // are in some kind of really bad state and just need to die
+    let magic = LucidContext::ptr_to_magic(context);
+    if magic != CTX_MAGIC {
+        println!("Invalid LucidContext Magic value: 0x{:X}", magic);
+        fatal_exit();
+    }
+
+    // Before we do anything else, save the extended state
+    let save_inst = LucidContext::ptr_to_save_inst(context);
+    if save_inst.is_err() {
+        println!("Invalid Save Instruction");
+        fatal_exit();
+    }
+    let save_inst = save_inst.unwrap();
+
+    // Get the save area
+    let save_area =
+        LucidContext::ptr_to_save_area(context, SaveDirection::FromBochs);
+
+    if save_area == 0 || save_area % 64 != 0 {
+        println!("Invalid Save Area");
+        fatal_exit();
+    }
+
+    // Determine save logic
+    match save_inst {
+        SaveInst::XSave64 => {
+            // Retrieve XCR0 value, this will serve as our save mask
+            let xcr0 = unsafe { _xgetbv(0) } as u64;
+
+            // Call xsave to save the extended state to Bochs save area
+            unsafe { _xsave64(save_area as *mut u8, xcr0); }             
+        },
+        SaveInst::FxSave64 => {
+            // Call fxsave to save the extended state to Bochs save area
+            unsafe { _fxsave64(save_area as *mut u8); }
+        },
+        _ => (), // NoSave
+    }
+
+    // Try to convert the exit reason into BochsExit
+    let exit_reason = BochsExit::try_from(exit_reason);
+    if exit_reason.is_err() {
+        println!("Invalid Bochs Exit Reason");
+        fatal_exit();
+    }
+    let exit_reason = exit_reason.unwrap();
+    
+    // Determine what to do based on the exit reason
+    match exit_reason {
+        BochsExit::Syscall => {
+            syscall_handler(context);
+        },
+    }
+
+    // Restore extended state, determine restore logic
+    match save_inst {
+        SaveInst::XSave64 => {
+            // Retrieve XCR0 value, this will serve as our save mask
+            let xcr0 = unsafe { _xgetbv(0) } as u64;
+
+            // Call xrstor to restore the extended state from Bochs save area
+            unsafe { _xrstor64(save_area as *const u8, xcr0); }             
+        },
+        SaveInst::FxSave64 => {
+            // Call fxrstor to restore the extended state from Bochs save area
+            unsafe { _fxrstor64(save_area as *const u8); }
+        },
+        _ => (), // NoSave
+    }
+}
+```
+
+There are a few important pieces here to discuss. 
