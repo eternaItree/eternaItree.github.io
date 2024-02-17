@@ -23,7 +23,7 @@ This fuzzer was conceived of and implemented originally by [Brandon Falk](https:
 
 Context-switching can be thought of as switching from executing one process to another. In our case, we're switching from Bochs execution to Lucid execution. Bochs is doing it's thing, reading/writing memory, doing arithmetic etc, but when it needs the kernel's help it attempts to make a syscall. When this occurs we need to:
 
-1. recognize that Bochs is trying syscall, this isn't always easy to do weirdly
+1. recognize that Bochs is trying to syscall, this isn't always easy to do weirdly
 2. intercept execution and redirect to the appropriate code path
 3. save Bochs' execution state
 4. execute our Lucid logic in place of the kernel, think of Lucid as Bochs' kernel
