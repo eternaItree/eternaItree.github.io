@@ -278,7 +278,7 @@ static __inline long __syscall6_original(long n, long a1, long a2, long a3, long
 	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2), "d"(a3), "r"(r10),
 							"r"(r8), "r"(r9) : "rcx", "r11", "memory");
 
-    return ret;
+	return ret;
 }
 
 static __inline long __syscall6(long n, long a1, long a2, long a3, long a4, long a5, long a6)
@@ -290,9 +290,9 @@ However, if we are running under Lucid, I set up our calling convention by expli
 ```c
 static __inline long __syscall6(long n, long a1, long a2, long a3, long a4, long a5, long a6)
 {
-	if (!g_lucid_ctx) { return __syscall6_original(n, a1, a2, a3, a4, a5, a6); }
+    if (!g_lucid_ctx) { return __syscall6_original(n, a1, a2, a3, a4, a5, a6); }
 	
-	register long ret;
+    register long ret;
     register long r12 __asm__("r12") = (size_t)(g_lucid_ctx->exit_handler);
     register long r13 __asm__("r13") = (size_t)(&g_lucid_ctx->register_bank);
     register long r14 __asm__("r14") = SYSCALL;
@@ -303,12 +303,12 @@ Now with our calling convention set up, we can then use inline assembly as befor
 ```c
 __asm__ __volatile__ (
         "mov %1, %%rax\n\t"
-		"mov %2, %%rdi\n\t"
-		"mov %3, %%rsi\n\t"
-		"mov %4, %%rdx\n\t"
-		"mov %5, %%r10\n\t"
-		"mov %6, %%r8\n\t"
-		"mov %7, %%r9\n\t"
+	"mov %2, %%rdi\n\t"
+	"mov %3, %%rsi\n\t"
+	"mov %4, %%rdx\n\t"
+	"mov %5, %%r10\n\t"
+	"mov %6, %%r8\n\t"
+	"mov %7, %%r9\n\t"
         "call *%%r12\n\t"
         "mov %%rax, %0\n\t"
         : "=r" (ret)
