@@ -34,7 +34,7 @@ Normally programmers don't have to worry about making syscalls directly. They in
 
 This provides a nice chokepoint for our purposes, since Bochs programmers also use C library functions instead of invoking syscalls directly. When Bochs wants to make a syscall, it's going to call a C library function. This gives us an opportunity to *intercept* these syscalls before they are made. We can insert our own logic into these functions that check to see whether or not Bochs is executing under Lucid, if it is, we can insert logic that directs execution to Lucid instead of the kernel. In pseudocode we can achieve something like the following:
 ```
-syscall()
+fn syscall()
   if lucid:
     lucid_syscall()
   else:
