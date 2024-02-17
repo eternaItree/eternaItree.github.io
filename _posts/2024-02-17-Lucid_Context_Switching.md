@@ -259,3 +259,63 @@ With the syntax explained, we see what is taking place. The job of these functio
 So the compiler will take those function args from the System V ABI and translate them into the syscall via the assembly that we explained above. So now these are the functions we need to edit so that we don't emit that `syscall` instruction and instead call into Lucid.
 
 ## Conditionally Calling Into Lucid
+So we need a way in these function bodies to call into Lucid instead of emit `syscall` instructions. To do so we need to define our own calling convention, for now I've been using the following:
+- `r15`: contains the address of the global Lucid execution context
+- `r14`: contains an "exit reason" which is just an `enum` explaining why we are context switching
+- `r13`: is the base address of the register bank structure of the Lucid execution context, we need this memory section to store our register values to save our state when we context switch
+- `r12`: stores the address of the "exit handler" which is the function to call to context switch
+
+This will no doubt change some as we add more features/functionality. 
+
+So to alter the functions, I changed the function logic to first check if we have a global Lucid execution context, if we do not, then execute the normal Musl function, you can see that here as I've moved the normal function logic out to a separate function called `__syscall6_original`:
+```c
+static __inline long __syscall6_original(long n, long a1, long a2, long a3, long a4, long a5, long a6)
+{
+	unsigned long ret;
+	register long r10 __asm__("r10") = a4;
+	register long r8  __asm__("r8")  = a5;
+	register long r9  __asm__("r9")  = a6;
+	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2), "d"(a3), "r"(r10),
+							"r"(r8), "r"(r9) : "rcx", "r11", "memory");
+
+    return ret;
+}
+
+static __inline long __syscall6(long n, long a1, long a2, long a3, long a4, long a5, long a6)
+{
+	if (!g_lucid_ctx) { return __syscall6_original(n, a1, a2, a3, a4, a5, a6); }
+```
+
+However, if we are running under Lucid, I set up our calling convention by explicitly setting the registers `r12-r15` in accordance to what we are expecting there when we context-switch to Lucid. 
+```c
+static __inline long __syscall6(long n, long a1, long a2, long a3, long a4, long a5, long a6)
+{
+	if (!g_lucid_ctx) { return __syscall6_original(n, a1, a2, a3, a4, a5, a6); }
+	
+	register long ret;
+    register long r12 __asm__("r12") = (size_t)(g_lucid_ctx->exit_handler);
+    register long r13 __asm__("r13") = (size_t)(&g_lucid_ctx->register_bank);
+    register long r14 __asm__("r14") = SYSCALL;
+    register long r15 __asm__("r15") = (size_t)(g_lucid_ctx);
+```
+
+Now with our calling convention set up, we can then use inline assembly as before. Notice we've replaced the `syscall` instruction with `call r12`, calling our exit handler as if it's a normal function:
+```c
+__asm__ __volatile__ (
+        "mov %1, %%rax\n\t"
+		"mov %2, %%rdi\n\t"
+		"mov %3, %%rsi\n\t"
+		"mov %4, %%rdx\n\t"
+		"mov %5, %%r10\n\t"
+		"mov %6, %%r8\n\t"
+		"mov %7, %%r9\n\t"
+        "call *%%r12\n\t"
+        "mov %%rax, %0\n\t"
+        : "=r" (ret)
+        : "r" (n), "r" (a1), "r" (a2), "r" (a3), "r" (a4), "r" (a5), "r" (a6),
+		  "r" (r12), "r" (r13), "r" (r14), "r" (r15)
+        : "rax", "rcx", "r11", "memory"
+    );
+	
+	return ret;
+```
