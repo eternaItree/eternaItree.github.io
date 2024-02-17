@@ -18,6 +18,8 @@ If you haven't heard, we're developing a fuzzer on the blog these days. I don't 
 
 This fuzzer was conceived of and implemented originally by [Brandon Falk](https://twitter.com/gamozolabs).
 
+There will be no repo changes with this post.
+
 ## Syscalls
 [Syscalls](https://wiki.osdev.org/System_Calls) are a way for userland to voluntarily context switch to kernel-mode in order to utilize some kernel provided utility or function. Context switching simply means changing the context in which code is executing. When you're adding integers, reading/writing memory, your process is executing in user-mode within your processes' virtual address space. But if you want to open a socket or file, you need the kernel's help. To do this, you make a syscall which will tell the processor to switch execution modes from user-mode to kernel-mode. In order to leave user-mode go to kernel-mode and then return to user-mode, a lot of care must be taken to accurately save the execution state at every step. Once you try to execute a syscall, the first thing the OS has to do is save your current execution state before it starts executing your requested kernel code, that way once the kernel is done with your request, it can return gracefully to executing your user-mode process.
 
@@ -483,4 +485,334 @@ fn lucid_handler(context: *mut LucidContext, exit_reason: i32) {
 }
 ```
 
-There are a few important pieces here to discuss. 
+There are a few important pieces here to discuss.
+
+## Extended State
+Let's start with this concept of the save area. What is that? Well, we already have a general purpose registers saved and our CPU flags, but there is what's called an "extended state" of the processor that we haven't saved. This can include the floating-point registers, vector registers, and other state information used by the processor to support advanced execution features like SIMD (Single Instruction, Multiple Data) instructions, encryption, and other stuff like control registers. Is this important? It's hard to say, we don't know wtf Bochs will do, it might count on these to be preserved across function calls so I thought we'd go ahead and do it. 
+
+To save this state, you just execute the appropriate saving instruction for your CPU. To do this somewhat dynamically at runtime, I just query the processor for at least two saving instructions to see if they're available, if they're not, for now, we don't support anything else. So when we create the execution context initially, we determine what save instruction we'll need and store that answer in the execution context. Then on a context switch, we can dynamically use the approriate extended state saving function. This works because we don't use any of the extended state in `lucid_handler` yet so it's preserved still. You can see how I checked during context initialization here:
+```rust
+pub fn new() -> Result<Self, LucidErr> {
+        // Check for what kind of features are supported we check from most 
+        // advanced to least
+        let save_inst = if std::is_x86_feature_detected!("xsave") {
+            SaveInst::XSave64
+        } else if std::is_x86_feature_detected!("fxsr") {
+            SaveInst::FxSave64
+        } else {
+            SaveInst::NoSave
+        };
+
+        // Get save area size
+        let save_size: usize = match save_inst {
+            SaveInst::NoSave => 0,
+            _ => calc_save_size(),
+        };
+```
+
+The way this works is the processor takes a pointer to memory where you want it saved and also how much you want saved, like what specific states. I just maxed out the amount of state I want saved and asked the CPU how much memory that would be:
+```rust
+// Standalone function to calculate the size of the save area for saving the 
+// extended processor state based on the current processor's features. `cpuid` 
+// will return the save area size based on the value of the XCR0 when ECX==0
+// and EAX==0xD. The value returned to EBX is based on the current features
+// enabled in XCR0, while the value returned in ECX is the largest size it
+// could be based on CPU capabilities. So out of an abundance of caution we use
+// the ECX value. We have to preserve EBX or rustc gets angry at us. We are
+// assuming that the fuzzer and Bochs do not modify the XCR0 at any time.  
+fn calc_save_size() -> usize {
+    let save: usize;
+    unsafe {
+        asm!(
+            "push rbx",
+            "mov rax, 0xD",
+            "xor rcx, rcx",
+            "cpuid",
+            "pop rbx",
+            out("rax") _,       // Clobber
+            out("rcx") save,    // Save the max size
+            out("rdx") _,       // Clobbered by CPUID output (w eax)
+        );
+    }
+
+    // Round up to the nearest page size
+    (save + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)
+}
+```
+
+I page align the result and then map that memory during execution context initialization and save the memory address to the execution state. Now at run time in `lucid_handler` we can save the extended state:
+```rust
+// Determine save logic
+    match save_inst {
+        SaveInst::XSave64 => {
+            // Retrieve XCR0 value, this will serve as our save mask
+            let xcr0 = unsafe { _xgetbv(0) } as u64;
+
+            // Call xsave to save the extended state to Bochs save area
+            unsafe { _xsave64(save_area as *mut u8, xcr0); }             
+        },
+        SaveInst::FxSave64 => {
+            // Call fxsave to save the extended state to Bochs save area
+            unsafe { _fxsave64(save_area as *mut u8); }
+        },
+        _ => (), // NoSave
+    }
+```
+
+Right now, all we're handling for exit reasons are syscalls, so we invoke our syscall handler and then restore the extended state before returning back to the `exit_handler` assembly stub:
+```rust
+// Determine what to do based on the exit reason
+    match exit_reason {
+        BochsExit::Syscall => {
+            syscall_handler(context);
+        },
+    }
+
+    // Restore extended state, determine restore logic
+    match save_inst {
+        SaveInst::XSave64 => {
+            // Retrieve XCR0 value, this will serve as our save mask
+            let xcr0 = unsafe { _xgetbv(0) } as u64;
+
+            // Call xrstor to restore the extended state from Bochs save area
+            unsafe { _xrstor64(save_area as *const u8, xcr0); }             
+        },
+        SaveInst::FxSave64 => {
+            // Call fxrstor to restore the extended state from Bochs save area
+            unsafe { _fxrstor64(save_area as *const u8); }
+        },
+        _ => (), // NoSave
+    }
+```
+
+Let's see how we handle syscalls.
+
+## Implementing Syscalls
+When we run the test program normally, not under Lucid, we get the following output:
+```terminal
+Argument count: 1
+Args:
+   -./test
+Test alive!
+Test alive!
+Test alive!
+Test alive!
+Test alive!
+g_lucid_ctx: 0
+```
+
+And when we run it with `strace`, we can see what syscalls are made:
+```terminal
+execve("./test", ["./test"], 0x7ffca76fee90 /* 49 vars */) = 0
+arch_prctl(ARCH_SET_FS, 0x7fd53887f5b8) = 0
+set_tid_address(0x7fd53887f7a8)         = 850649
+ioctl(1, TIOCGWINSZ, {ws_row=40, ws_col=110, ws_xpixel=0, ws_ypixel=0}) = 0
+writev(1, [{iov_base="Argument count: 1", iov_len=17}, {iov_base="\n", iov_len=1}], 2Argument count: 1
+) = 18
+writev(1, [{iov_base="Args:", iov_len=5}, {iov_base="\n", iov_len=1}], 2Args:
+) = 6
+writev(1, [{iov_base="   -./test", iov_len=10}, {iov_base="\n", iov_len=1}], 2   -./test
+) = 11
+writev(1, [{iov_base="Test alive!", iov_len=11}, {iov_base="\n", iov_len=1}], 2Test alive!
+) = 12
+nanosleep({tv_sec=1, tv_nsec=0}, 0x7ffc2fb55470) = 0
+writev(1, [{iov_base="Test alive!", iov_len=11}, {iov_base="\n", iov_len=1}], 2Test alive!
+) = 12
+nanosleep({tv_sec=1, tv_nsec=0}, 0x7ffc2fb55470) = 0
+writev(1, [{iov_base="Test alive!", iov_len=11}, {iov_base="\n", iov_len=1}], 2Test alive!
+) = 12
+nanosleep({tv_sec=1, tv_nsec=0}, 0x7ffc2fb55470) = 0
+writev(1, [{iov_base="Test alive!", iov_len=11}, {iov_base="\n", iov_len=1}], 2Test alive!
+) = 12
+nanosleep({tv_sec=1, tv_nsec=0}, 0x7ffc2fb55470) = 0
+writev(1, [{iov_base="Test alive!", iov_len=11}, {iov_base="\n", iov_len=1}], 2Test alive!
+) = 12
+nanosleep({tv_sec=1, tv_nsec=0}, 0x7ffc2fb55470) = 0
+writev(1, [{iov_base="g_lucid_ctx: 0", iov_len=14}, {iov_base="\n", iov_len=1}], 2g_lucid_ctx: 0
+) = 15
+exit_group(0)                           = ?
++++ exited with 0 +++
+```
+
+We see that the first two syscalls are involved with process creation, we don't need to worry about those our process is already created and loaded in memory. The other syscalls are ones we'll need to handle, things like `set_tid_address`, `ioctl`, and `writev`. We don't worry about `exit_group` yet as that will be a fatal exit condition because Bochs shouldn't exit if we're snapshot fuzzing. 
+
+So we can use our saved register bank information to extract the syscall number from `eax` and dispatch to the appropriate syscall function! You can see that logic here:
+```rust
+// This is where we process Bochs making a syscall. All we need is a pointer to
+// the execution context, and we can then access the register bank and all the
+// peripheral structures we need
+#[allow(unused_variables)]
+pub fn syscall_handler(context: *mut LucidContext) {
+    // Get a handle to the register bank
+    let bank = LucidContext::get_register_bank(context);
+
+    // Check what the syscall number is
+    let syscall_no = (*bank).rax;
+
+    // Get the syscall arguments
+    let arg1 = (*bank).rdi;
+    let arg2 = (*bank).rsi;
+    let arg3 = (*bank).rdx;
+    let arg4 = (*bank).r10;
+    let arg5 = (*bank).r8;
+    let arg6 = (*bank).r9;
+
+    match syscall_no {
+        // ioctl
+        0x10 => {
+            //println!("Handling ioctl()...");
+            // Make sure the fd is 1, that's all we handle right now?
+            if arg1 != 1 {
+                println!("Invalid `ioctl` fd: {}", arg1);
+                fatal_exit();
+            }
+
+            // Check the `cmd` argument
+            match arg2 as u64 {
+                // Requesting window size
+                libc::TIOCGWINSZ => {   
+                    // Arg 3 is a pointer to a struct winsize
+                    let winsize_p = arg3 as *mut libc::winsize;
+
+                    // If it's NULL, return an error, we don't set errno yet
+                    // that's a weird problem
+                    // TODO: figure out that whole TLS issue yikes
+                    if winsize_p.is_null() {
+                        (*bank).rax = usize::MAX;
+                        return;
+                    }
+
+                    // Deref the raw pointer
+                    let winsize = unsafe { &mut *winsize_p };
+
+                    // Set to some constants
+                    winsize.ws_row      = WS_ROW;
+                    winsize.ws_col      = WS_COL;
+                    winsize.ws_xpixel   = WS_XPIXEL;
+                    winsize.ws_ypixel   = WS_YPIXEL;
+
+                    // Return success
+                    (*bank).rax = 0;
+                },
+                _ => {
+                    println!("Unhandled `ioctl` argument: 0x{:X}", arg1);
+                    fatal_exit();
+                }
+            }
+        },
+        // writev
+        0x14 => {
+            //println!("Handling writev()...");
+            // Get the fd
+            let fd = arg1 as libc::c_int;
+
+            // Make sure it's an fd we handle
+            if fd != STDOUT {
+                println!("Unhandled writev fd: {}", fd);
+            }
+
+            // An accumulator that we return
+            let mut bytes_written = 0;
+
+            // Get the iovec count
+            let iovcnt = arg3 as libc::c_int;
+
+            // Get the pointer to the iovec
+            let mut iovec_p = arg2 as *const libc::iovec;
+
+            // If the pointer was NULL, just return error
+            if iovec_p.is_null() {
+                (*bank).rax = usize::MAX;
+                return;
+            }
+
+            // Iterate through the iovecs and write the contents
+            green!();
+            for i in 0..iovcnt {
+                bytes_written += write_iovec(iovec_p);
+
+                // Update iovec_p
+                iovec_p = unsafe { iovec_p.offset(1 + i as isize) };
+            }
+            clear!();
+
+            // Update return value
+            (*bank).rax = bytes_written;
+        },
+        // nanosleep
+        0x23 => {
+            //println!("Handling nanosleep()...");
+            (*bank).rax = 0;
+        },
+        // set_tid_address
+        0xDA => {
+            //println!("Handling set_tid_address()...");
+            // Just return Boch's pid, no need to do anything
+            (*bank).rax = BOCHS_PID as usize;
+        },
+        _ => {
+            println!("Unhandled Syscall Number: 0x{:X}", syscall_no);
+            fatal_exit();
+        }
+    }
+}
+```
+
+That's about it! It's kind of fun acting as the kernel. Right now our test program doesn't do much, but I bet we're going to have to figure out how to deal with things like files and such when using Bochs, but that's a different time. Now all there is to do, after setting the return code via `rax`, is return back to the `exit_handler` stub and back to Bochs gracefully.
+
+## Returning Gracefully
+```rust
+    // Restore the flags
+    "popfq",
+
+    // Restore the GPRS
+    "mov rax, [r13 + 0x0]",
+    "mov rbx, [r13 + 0x8]",
+    "mov rcx, [r13 + 0x10]",
+    "mov rdx, [r13 + 0x18]",
+    "mov rsi, [r13 + 0x20]",
+    "mov rdi, [r13 + 0x28]",
+    "mov rbp, [r13 + 0x30]",
+    "mov rsp, [r13 + 0x38]",
+    "mov r8, [r13 + 0x40]",
+    "mov r9, [r13 + 0x48]",
+    "mov r10, [r13 + 0x50]",
+    "mov r11, [r13 + 0x58]",
+    "mov r12, [r13 + 0x60]",
+    "mov r13, [r13 + 0x68]",
+    "mov r14, [r13 + 0x70]",
+    "mov r15, [r13 + 0x78]",
+
+    // Return execution back to Bochs!
+    "ret"
+```
+
+We restore the CPU flags, restore the general purpose registers, and then we simple `ret` like we're done with the function call. Don't forget we already restored the extended state before within `lucid_context` before returning from that function. 
+
+## Conclusion
+And just like that, we have an infrastructure that is capable of handling context switches from Bochs to the fuzzer. It will no doubt change and need to be refactored, but the ideas will remain similar. We can see the output below demonstrates the test program running under Lucid with us handling the syscalls ourselves:
+```terminal
+[08:15:56] lucid> Loading Bochs...
+[08:15:56] lucid> Bochs mapping: 0x10000 - 0x18000
+[08:15:56] lucid> Bochs mapping size: 0x8000
+[08:15:56] lucid> Bochs stack: 0x7F8A50FCF000
+[08:15:56] lucid> Bochs entry: 0x11058
+[08:15:56] lucid> Creating Bochs execution context...
+[08:15:56] lucid> Starting Bochs...
+Argument count: 4
+Args:
+   -./bochs
+   -lmfao
+   -hahahah
+   -yes!
+Test alive!
+Test alive!
+Test alive!
+Test alive!
+Test alive!
+g_lucid_ctx: 0x55f27f693cd0
+Unhandled Syscall Number: 0xE7
+```
+
+## Next Up?
+Next we will compile Bochs against Musl and work on getting it to work. We'll need to implement all of its syscalls as well as get it running a test target that we'll want to snapshot and run over and over. So the next blogpost should be a Bochs that is syscall-sandboxed snapshotting and rerunning a hello world type target. Until then!
