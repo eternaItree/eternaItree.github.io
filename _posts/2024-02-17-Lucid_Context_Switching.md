@@ -382,8 +382,7 @@ This will save the register values to memory in the memory bank for preservation
 
 We're using a pure assembly stub right now but we'd like to start using Rust at some point, that point is now. We have saved all the state we can for now, and it's time to call into a real Rust function that will make programming and implementation easier. To call into a function though, we need to set up the register values to adhere to the function calling ABI remember. Two pieces of data that we want to be accessible are the execution context and the reason why we exited. Those are in `r15` and `r14` respectively remember. So we can simply place those into the registers used for passing function arguments and call into a Rust function called `lucid_handler` now. 
 ```rust
-// Bochs saves its GPRs before calling into us, so all we need to do is 
-// save the flags
+// Save the CPU flags
 "pushfq",
 
 // Set up the function arguments for lucid_handler according to ABI
