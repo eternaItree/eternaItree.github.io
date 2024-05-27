@@ -16,13 +16,13 @@ minimal_mistakes_skin    : "contrast"
 
 # Site Settings
 locale                   : "en-US"
-title                    : "The Human Machine Interface"
+title                    : "EternaItree"
 title_separator          : "-"
-name                     : "The Human Machine Interface"
-description              : "Information Security and Binary Exploitation"
+name                     : "eternaItree"
+description              : "Cyber Security and Machine Learning"
 url                      : "https://h0mbre.github.io" # the base hostname & protocol for your site e.g. "https://mmistakes.github.io"
 baseurl                  : # the subpath of your site, e.g. "/blog"
-repository               : "h0mbre/h0mbre.github.io" # GitHub username/repo-name e.g. "mmistakes/minimal-mistakes"
+repository               : "eternaItree.etertaItree.github.io" # GitHub username/repo-name e.g. "mmistakes/minimal-mistakes"
 teaser                   : # path of fallback teaser image, e.g. "/assets/images/500x300.png"
 logo                     : # path of logo image to display in the masthead, e.g. "/assets/images/88x88.png"
 masthead_title           : # overrides the website title displayed in the masthead, use " " for no title
@@ -106,27 +106,27 @@ analytics:
 
 # Site Author
 author:
-  name             : "h0mbre"
+  name             : "eternaItree"
   avatar           : "/assets/images/avatar.jpg" # path of avatar image, e.g. "/assets/images/bio-photo.jpg"
-  bio              : "Binary Exploitation"
-  location         : "American East Coast"
+  bio              : "Cyber Security"
+  location         : "XI'AN, CHINA"
   email            :
   links:
     - label: "Email"
       icon: "fas fa-fw fa-envelope-square"
-      url: mailto:h0mbre.pwn@gmail.com
+      url: gaasyu.chan@gmail.com
     - label: "Website"
       icon: "fas fa-fw fa-link"
       # url: "https://your-website.com"
     - label: "Twitter"
       icon: "fab fa-fw fa-twitter-square"
-      url: "https://twitter.com/h0mbre_"
+        # url: "https://twitter.com/h0mbre_"
     - label: "Facebook"
       icon: "fab fa-fw fa-facebook-square"
       # url: "https://facebook.com/"
     - label: "GitHub"
       icon: "fab fa-fw fa-github"
-      url: "https://github.com/h0mbre"
+      url: "https://github.com/eteraItree"
     - label: "Instagram"
       icon: "fab fa-fw fa-instagram"
       # url: "https://instagram.com/"
