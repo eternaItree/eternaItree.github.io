@@ -18,7 +18,6 @@ tags:
 ---
 
 ## Introduction
-
 This box mainly introduce a hands-on method called `tunneling`, which is a protocol that allows the movement data from one network to another, so that the attackers can communicate with internal network. 
 
 **SSH tunneling**: A specific type of tunnel that uses SSH protocol to establish secure connection between two endpoints.

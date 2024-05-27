@@ -109,15 +109,15 @@ author:
   name             : "eternaItree"
   avatar           : "/assets/images/avatar.jpg" # path of avatar image, e.g. "/assets/images/bio-photo.jpg"
   bio              : "Cyber Security"
-  location         : "CHIN1A"
+  location         : "CHINA"
   email            :
   links:
     - label: "Email"
       icon: "fas fa-fw fa-envelope-square"
-      url: gaasyu.chan@gmail.com
+      url: mailto:gaasyu.chan@gmail.com
     - label: "Website"
       icon: "fas fa-fw fa-link"
-      # url: "https://your-website.com"
+      url: "https://gaasyuchan.net"
     - label: "Twitter"
       icon: "fab fa-fw fa-twitter-square"
         # url: "https://twitter.com/h0mbre_"
@@ -126,7 +126,7 @@ author:
       # url: "https://facebook.com/"
     - label: "GitHub"
       icon: "fab fa-fw fa-github"
-      url: "https://github.com/eteraItree"
+      url: "https://github.com/eternaItree"
     - label: "Instagram"
       icon: "fab fa-fw fa-instagram"
       # url: "https://instagram.com/"
